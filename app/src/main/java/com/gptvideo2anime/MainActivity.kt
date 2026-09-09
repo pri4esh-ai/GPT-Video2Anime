@@ -1,10 +1,10 @@
+
 package com.gptvideo2anime
 
 import android.Manifest
 import android.app.Dialog
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -19,10 +19,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.gptvideo2anime.inference.OnnxAnimeEngine
 import com.gptvideo2anime.model.ModelManager
-import com.gptvideo2anime.pipeline.VideoProcessingService
+import com.gptvideo2anime.pipeline.VideoProcessor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -34,6 +36,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var convertButton: Button
 
     private lateinit var modelManager: ModelManager
+    private lateinit var videoProcessor: VideoProcessor
 
     private var selectedVideo: Uri? = null
     private var processing = false
@@ -60,10 +63,10 @@ class MainActivity : AppCompatActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-
         super.onCreate(savedInstanceState)
 
         modelManager = ModelManager(this)
+        videoProcessor = VideoProcessor(this)
 
         val root =
             LinearLayout(this).apply {
@@ -114,7 +117,7 @@ class MainActivity : AppCompatActivity() {
                     processing = true
                     isEnabled = false
 
-                    startVideoPipeline(input)
+                    startStage1(input)
                 }
             }
 
@@ -243,22 +246,17 @@ class MainActivity : AppCompatActivity() {
                     appendLog(message)
                 }
 
-                runOnUiThread {
-                    status.text =
-                        modelManager.modelStatus()
-                }
+                status.text =
+                    modelManager.modelStatus()
 
             } catch (e: Exception) {
 
-                runOnUiThread {
+                status.text =
+                    "Model install failed"
 
-                    status.text =
-                        "Model install failed"
-
-                    appendLog(
-                        e.message ?: "Unknown error"
-                    )
-                }
+                appendLog(
+                    e.message ?: "Unknown error"
+                )
             }
         }
     }
@@ -275,7 +273,7 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(
                 this,
                 permission
-            ) != PackageManager.PERMISSION_GRANTED
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
 
             permissionLauncher.launch(
@@ -318,7 +316,12 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                animePreview.setImageBitmap(anime)
+                val uiBitmap =
+                    anime.copy(Bitmap.Config.ARGB_8888, false)
+
+                anime.recycle()
+
+                animePreview.setImageBitmap(uiBitmap)
 
                 val elapsed =
                     SystemClock.elapsedRealtime() - start
@@ -337,6 +340,66 @@ class MainActivity : AppCompatActivity() {
                 appendLog(
                     "ERROR: ${e.message}"
                 )
+            }
+        }
+    }
+
+    private fun startStage1(input: Uri) {
+
+        lifecycleScope.launch {
+
+            try {
+
+                appendLog("Starting Stage 1...")
+
+                val result =
+                    withContext(Dispatchers.IO) {
+
+                        videoProcessor.process(input) { current, total, stage ->
+
+                            runOnUiThread {
+
+                                status.text =
+                                    "$stage ($current/$total)"
+
+                                appendLog(
+                                    "$stage ($current/$total)"
+                                )
+                            }
+                        }
+                    }
+
+                result.testFramePath?.let { path ->
+
+                    val file =
+                        File(path)
+
+                    if (file.exists()) {
+
+                        val bitmap =
+                            BitmapFactory.decodeFile(path)
+
+                        if (bitmap != null) {
+
+                            animePreview.setImageBitmap(bitmap)
+
+                            appendLog("Loaded generated preview.")
+                        }
+                    }
+                }
+
+                status.text = "Stage 1 Complete"
+
+            } catch (e: Exception) {
+
+                status.text = "Failed"
+
+                appendLog("ERROR: ${e.message}")
+
+            } finally {
+
+                processing = false
+                convertButton.isEnabled = true
             }
         }
     }
@@ -360,41 +423,6 @@ class MainActivity : AppCompatActivity() {
         } finally {
 
             retriever.release()
-        }
-    }
-
-    private fun startVideoPipeline(input: Uri) {
-
-        val intent =
-            Intent(
-                this,
-                VideoProcessingService::class.java
-            ).apply {
-
-                action =
-                    VideoProcessingService.ACTION_START
-
-                putExtra(
-                    VideoProcessingService.EXTRA_INPUT_URI,
-                    input.toString()
-                )
-            }
-
-        ContextCompat.startForegroundService(
-            this,
-            intent
-        )
-
-        appendLog("Full video pipeline started.")
-
-        lifecycleScope.launch {
-            kotlinx.coroutines.delay(1500)
-
-            processing = false
-
-            runOnUiThread {
-                convertButton.isEnabled = true
-            }
         }
     }
 
