@@ -2,10 +2,7 @@ package com.gptvideo2anime
 
 import android.Manifest
 import android.app.Dialog
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -40,47 +37,6 @@ class MainActivity : AppCompatActivity() {
 
     private var selectedVideo: Uri? = null
     private var processing = false
-    private var receiverRegistered = false
-
-    private val progressReceiver =
-        object : BroadcastReceiver() {
-            override fun onReceive(
-                context: Context?,
-                intent: Intent?
-            ) {
-
-                val stage =
-                    intent?.getStringExtra(
-                        VideoProcessingService.EXTRA_STAGE
-                    ) ?: return
-
-                val current =
-                    intent.getIntExtra(
-                        VideoProcessingService.EXTRA_CURRENT,
-                        0
-                    )
-
-                val total =
-                    intent.getIntExtra(
-                        VideoProcessingService.EXTRA_TOTAL,
-                        0
-                    )
-
-                val text =
-                    if (total > 0)
-                        "$stage ($current/$total)"
-                    else
-                        stage
-
-                status.text = text
-                appendLog(text)
-
-                if (stage == "Complete") {
-                    processing = false
-                    convertButton.isEnabled = true
-                }
-            }
-        }
 
     private val videoPicker =
         registerForActivityResult(
@@ -92,6 +48,7 @@ class MainActivity : AppCompatActivity() {
             selectedVideo = uri
             status.text = "Video selected."
             appendLog("Video selected.")
+
             generatePreview(uri)
         }
 
@@ -132,6 +89,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(
             Button(this).apply {
                 text = "Choose Video"
+
                 setOnClickListener {
                     videoPicker.launch("video/*")
                 }
@@ -141,12 +99,22 @@ class MainActivity : AppCompatActivity() {
         convertButton =
             Button(this).apply {
                 text = "Convert To Anime"
+
                 setOnClickListener {
-                    if (!processing) {
-                        processing = true
-                        isEnabled = false
-                        startVideoPipeline()
+
+                    if (processing) return@setOnClickListener
+
+                    val input = selectedVideo
+
+                    if (input == null) {
+                        appendLog("Select a video first.")
+                        return@setOnClickListener
                     }
+
+                    processing = true
+                    isEnabled = false
+
+                    startVideoPipeline(input)
                 }
             }
 
@@ -160,6 +128,7 @@ class MainActivity : AppCompatActivity() {
                         260,
                         1f
                     )
+
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setBackgroundColor(Color.DKGRAY)
             }
@@ -172,6 +141,7 @@ class MainActivity : AppCompatActivity() {
                         260,
                         1f
                     )
+
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setBackgroundColor(Color.DKGRAY)
             }
@@ -193,7 +163,9 @@ class MainActivity : AppCompatActivity() {
 
         row.addView(
             LinearLayout(this).apply {
+
                 orientation = LinearLayout.VERTICAL
+
                 layoutParams =
                     LinearLayout.LayoutParams(
                         0,
@@ -214,7 +186,9 @@ class MainActivity : AppCompatActivity() {
 
         row.addView(
             LinearLayout(this).apply {
+
                 orientation = LinearLayout.VERTICAL
+
                 layoutParams =
                     LinearLayout.LayoutParams(
                         0,
@@ -244,34 +218,20 @@ class MainActivity : AppCompatActivity() {
 
         scroll =
             ScrollView(this).apply {
+
                 layoutParams =
                     LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         0,
                         1f
                     )
+
                 addView(logs)
             }
 
         root.addView(scroll)
 
         setContentView(root)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(
-                progressReceiver,
-                IntentFilter(VideoProcessingService.ACTION_PROGRESS),
-                Context.RECEIVER_NOT_EXPORTED
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            registerReceiver(
-                progressReceiver,
-                IntentFilter(VideoProcessingService.ACTION_PROGRESS)
-            )
-        }
-
-        receiverRegistered = true
 
         requestPermissions()
 
@@ -283,28 +243,24 @@ class MainActivity : AppCompatActivity() {
                     appendLog(message)
                 }
 
-                status.text =
-                    modelManager.modelStatus()
+                runOnUiThread {
+                    status.text =
+                        modelManager.modelStatus()
+                }
 
             } catch (e: Exception) {
 
-                status.text =
-                    "Model install failed"
+                runOnUiThread {
 
-                appendLog(
-                    e.message ?: "Unknown error"
-                )
+                    status.text =
+                        "Model install failed"
+
+                    appendLog(
+                        e.message ?: "Unknown error"
+                    )
+                }
             }
         }
-    }
-
-    override fun onDestroy() {
-
-        if (receiverRegistered) {
-            unregisterReceiver(progressReceiver)
-        }
-
-        super.onDestroy()
     }
 
     private fun requestPermissions() {
@@ -321,6 +277,7 @@ class MainActivity : AppCompatActivity() {
                 permission
             ) != PackageManager.PERMISSION_GRANTED
         ) {
+
             permissionLauncher.launch(
                 arrayOf(permission)
             )
@@ -355,6 +312,7 @@ class MainActivity : AppCompatActivity() {
 
                 val anime =
                     withContext(Dispatchers.Default) {
+
                         OnnxAnimeEngine(modelPath).use {
                             it.processFrame(frame)
                         }
@@ -405,21 +363,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startVideoPipeline() {
+    private fun startVideoPipeline(input: Uri) {
 
-        val input =
-            selectedVideo ?: run {
-
-                processing = false
-                convertButton.isEnabled = true
-
-                appendLog("Select a video first.")
-
-                return
-            }
-
-        ContextCompat.startForegroundService(
-            this,
+        val intent =
             Intent(
                 this,
                 VideoProcessingService::class.java
@@ -433,9 +379,23 @@ class MainActivity : AppCompatActivity() {
                     input.toString()
                 )
             }
+
+        ContextCompat.startForegroundService(
+            this,
+            intent
         )
 
         appendLog("Full video pipeline started.")
+
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(1500)
+
+            processing = false
+
+            runOnUiThread {
+                convertButton.isEnabled = true
+            }
+        }
     }
 
     private fun showFullPreview(source: ImageView) {
