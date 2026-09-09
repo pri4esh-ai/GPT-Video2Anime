@@ -1,0 +1,36 @@
+name: Create Working Branch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-branch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create branch from known-good commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          REPO="${{ github.repository }}"
+          BRANCH="working-fe9a776"
+          TARGET="fe9a776191a7463af1980c04726ad0ac71e64841"
+
+          echo "Creating $BRANCH from $TARGET"
+
+          gh api \
+            --method POST \
+            "/repos/$REPO/git/refs" \
+            -f ref="refs/heads/$BRANCH" \
+            -f sha="$TARGET"
+
+          echo "Branch created successfully."
+
+          gh api \
+            "/repos/$REPO/git/ref/heads/$BRANCH" \
+            --jq '.object.sha'
