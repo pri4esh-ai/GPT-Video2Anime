@@ -40,6 +40,7 @@ class MainActivity : AppCompatActivity() {
 
     private var selectedVideo: Uri? = null
     private var processing = false
+    private var receiverRegistered = false
 
     private val progressReceiver =
         object : BroadcastReceiver() {
@@ -65,21 +66,18 @@ class MainActivity : AppCompatActivity() {
                         0
                     )
 
-                runOnUiThread {
+                val text =
+                    if (total > 0)
+                        "$stage ($current/$total)"
+                    else
+                        stage
 
-                    val text =
-                        if (total > 0)
-                            "$stage ($current/$total)"
-                        else
-                            stage
+                status.text = text
+                appendLog(text)
 
-                    status.text = text
-                    appendLog(text)
-
-                    if (stage == "Complete") {
-                        processing = false
-                        convertButton.isEnabled = true
-                    }
+                if (stage == "Complete") {
+                    processing = false
+                    convertButton.isEnabled = true
                 }
             }
         }
@@ -92,11 +90,8 @@ class MainActivity : AppCompatActivity() {
             uri ?: return@registerForActivityResult
 
             selectedVideo = uri
-
             status.text = "Video selected."
-
             appendLog("Video selected.")
-
             generatePreview(uri)
         }
 
@@ -146,7 +141,6 @@ class MainActivity : AppCompatActivity() {
         convertButton =
             Button(this).apply {
                 text = "Convert To Anime"
-
                 setOnClickListener {
                     if (!processing) {
                         processing = true
@@ -263,10 +257,21 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(root)
 
-        registerReceiver(
-            progressReceiver,
-            IntentFilter(VideoProcessingService.ACTION_PROGRESS)
-        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(
+                progressReceiver,
+                IntentFilter(VideoProcessingService.ACTION_PROGRESS),
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(
+                progressReceiver,
+                IntentFilter(VideoProcessingService.ACTION_PROGRESS)
+            )
+        }
+
+        receiverRegistered = true
 
         requestPermissions()
 
@@ -278,28 +283,27 @@ class MainActivity : AppCompatActivity() {
                     appendLog(message)
                 }
 
-                runOnUiThread {
-                    status.text =
-                        modelManager.modelStatus()
-                }
+                status.text =
+                    modelManager.modelStatus()
 
             } catch (e: Exception) {
 
-                runOnUiThread {
+                status.text =
+                    "Model install failed"
 
-                    status.text =
-                        "Model install failed"
-
-                    appendLog(
-                        e.message ?: "Unknown error"
-                    )
-                }
+                appendLog(
+                    e.message ?: "Unknown error"
+                )
             }
         }
     }
 
     override fun onDestroy() {
-        unregisterReceiver(progressReceiver)
+
+        if (receiverRegistered) {
+            unregisterReceiver(progressReceiver)
+        }
+
         super.onDestroy()
     }
 
@@ -317,7 +321,9 @@ class MainActivity : AppCompatActivity() {
                 permission
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            permissionLauncher.launch(arrayOf(permission))
+            permissionLauncher.launch(
+                arrayOf(permission)
+            )
         }
     }
 
@@ -370,7 +376,9 @@ class MainActivity : AppCompatActivity() {
 
                 status.text = "Preview failed"
 
-                appendLog("ERROR: ${e.message}")
+                appendLog(
+                    "ERROR: ${e.message}"
+                )
             }
         }
     }
