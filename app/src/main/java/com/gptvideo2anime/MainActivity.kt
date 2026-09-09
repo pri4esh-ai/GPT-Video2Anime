@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -19,7 +20,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.gptvideo2anime.inference.OnnxAnimeEngine
 import com.gptvideo2anime.model.ModelManager
-import com.gptvideo2anime.pipeline.FirstFrameExtractor
 import com.gptvideo2anime.pipeline.VideoProcessingService
 import kotlinx.coroutines.launch
 
@@ -38,15 +38,10 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(
             ActivityResultContracts.GetContent()
         ) { uri ->
-
             if (uri != null) {
-
                 selectedVideo = uri
-
                 status.text = "Video selected."
-
                 appendLog("Video selected.")
-
                 generatePreview(uri)
             }
         }
@@ -55,69 +50,58 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) {
-            appendLog("Permissions granted.")
+            appendLog("Permissions checked.")
         }
 
-    override fun onCreate(
-        savedInstanceState: Bundle?
-    ) {
+    override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         modelManager = ModelManager(this)
 
-        val root =
-            LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(32, 32, 32, 32)
-            }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 32, 32, 32)
+        }
 
-        val title =
-            TextView(this).apply {
-                text = "GPT Video2Anime"
-                textSize = 26f
-            }
+        val title = TextView(this).apply {
+            text = "GPT Video2Anime"
+            textSize = 26f
+        }
 
-        status =
-            TextView(this).apply {
-                text = "Preparing models..."
-                textSize = 16f
-            }
+        status = TextView(this).apply {
+            text = "Preparing models..."
+            textSize = 16f
+        }
 
-        val choose =
-            Button(this).apply {
-                text = "Choose Video"
-                setOnClickListener {
-                    videoPicker.launch("video/*")
-                }
+        val choose = Button(this).apply {
+            text = "Choose Video"
+            setOnClickListener {
+                videoPicker.launch("video/*")
             }
+        }
 
-        val convert =
-            Button(this).apply {
-                text = "Convert To Anime"
-                setOnClickListener {
-                    startVideoPipeline()
-                }
+        val convert = Button(this).apply {
+            text = "Convert To Anime"
+            setOnClickListener {
+                startVideoPipeline()
             }
+        }
 
-        originalPreview =
-            ImageView(this).apply {
-                adjustViewBounds = true
-            }
+        originalPreview = ImageView(this).apply {
+            adjustViewBounds = true
+        }
 
-        animePreview =
-            ImageView(this).apply {
-                adjustViewBounds = true
-            }
+        animePreview = ImageView(this).apply {
+            adjustViewBounds = true
+        }
 
-        logs =
-            TextView(this).apply {
-                textSize = 13f
-            }
+        logs = TextView(this).apply {
+            textSize = 13f
+        }
 
-        val scroll =
-            ScrollView(this).apply {
-                addView(logs)
-            }
+        val scroll = ScrollView(this).apply {
+            addView(logs)
+        }
 
         root.addView(title)
         root.addView(status)
@@ -132,30 +116,22 @@ class MainActivity : AppCompatActivity() {
         requestPermissions()
 
         lifecycleScope.launch {
-
             try {
-
                 modelManager.ensureModels { message ->
-                    runOnUiThread {
-                        appendLog(message)
-                    }
+                    runOnUiThread { appendLog(message) }
                 }
 
                 status.text = modelManager.modelStatus()
 
             } catch (e: Exception) {
-
                 status.text = "Model install failed"
-
                 appendLog(e.message ?: "Unknown error")
             }
         }
     }
 
     private fun requestPermissions() {
-
-        val permissions =
-            mutableListOf<String>()
+        val permissions = mutableListOf<String>()
 
         if (Build.VERSION.SDK_INT >= 33) {
             permissions += Manifest.permission.READ_MEDIA_VIDEO
@@ -165,7 +141,6 @@ class MainActivity : AppCompatActivity() {
 
         val missing =
             permissions.filter {
-
                 ContextCompat.checkSelfPermission(
                     this,
                     it
@@ -179,38 +154,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun generatePreview(
-        uri: Uri
-    ) {
-
+    private fun generatePreview(uri: Uri) {
         lifecycleScope.launch {
-
             try {
-
                 appendLog("Extracting first frame...")
 
-                val frame =
-                    FirstFrameExtractor.extract(
-                        this@MainActivity,
-                        uri
-                    )
+                val frame = extractFirstFrame(uri)
 
                 originalPreview.setImageBitmap(frame)
-
-                appendLog("Loading AnimeGANv3...")
 
                 val modelPath =
                     modelManager.animeModelPath()
                         ?: throw IllegalStateException(
-                            "Anime model missing."
+                            "AnimeGANv3 not installed."
                         )
 
-                val start =
-                    SystemClock.elapsedRealtime()
+                appendLog("Running AnimeGANv3...")
+
+                val start = SystemClock.elapsedRealtime()
 
                 val anime =
                     OnnxAnimeEngine(modelPath).use {
-
                         it.processFrame(frame)
                     }
 
@@ -223,31 +187,42 @@ class MainActivity : AppCompatActivity() {
                     "Preview ready (${elapsed} ms)"
 
                 appendLog(
-                    "Inference completed in ${elapsed} ms"
+                    "Preview completed in ${elapsed} ms"
                 )
 
             } catch (e: Exception) {
-
                 status.text = "Preview failed"
-
-                appendLog(
-                    "ERROR: ${e.message}"
-                )
+                appendLog("ERROR: ${e.message}")
             }
         }
     }
 
-    private fun startVideoPipeline() {
+    private fun extractFirstFrame(uri: Uri): Bitmap {
+        val retriever = MediaMetadataRetriever()
 
-        val input =
-            selectedVideo ?: return
+        try {
+            retriever.setDataSource(this, uri)
+
+            return retriever.getFrameAtTime(
+                0L,
+                MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+            ) ?: throw IllegalStateException(
+                "Unable to extract first frame."
+            )
+
+        } finally {
+            retriever.release()
+        }
+    }
+
+    private fun startVideoPipeline() {
+        val input = selectedVideo ?: return
 
         val intent =
             Intent(
                 this,
                 VideoProcessingService::class.java
             ).apply {
-
                 action =
                     VideoProcessingService.ACTION_START
 
@@ -265,10 +240,7 @@ class MainActivity : AppCompatActivity() {
         appendLog("Full video pipeline started.")
     }
 
-    private fun appendLog(
-        text: String
-    ) {
-
-        logs.append(text + "\n")
+    private fun appendLog(text: String) {
+        logs.append("$text\n")
     }
 }
