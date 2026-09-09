@@ -11,83 +11,114 @@ class OnnxAnimeEngine(
     modelPath: String
 ) : AutoCloseable {
 
-    private val environment = OrtEnvironment.getEnvironment()
-    private val session = environment.createSession(modelPath)
+    private val environment =
+        OrtEnvironment.getEnvironment()
 
-    fun inputNames(): Set<String> = session.inputNames
+    private val session =
+        environment.createSession(modelPath)
 
-    fun outputNames(): Set<String> = session.outputNames
+    fun inputNames(): Set<String> =
+        session.inputNames
 
-    fun processFrame(frame: Bitmap): Bitmap {
+    fun outputNames(): Set<String> =
+        session.outputNames
+
+    fun processFrame(
+        frame: Bitmap
+    ): Bitmap {
+
         require(!frame.isRecycled) {
             "Input frame is recycled."
         }
 
-        val inputName = session.inputNames.firstOrNull()
-            ?: throw IllegalStateException("ONNX model has no input.")
+        val inputName =
+            session.inputNames.firstOrNull()
+                ?: throw IllegalStateException(
+                    "ONNX model has no input."
+                )
 
-        val inputInfo = session.inputInfo[inputName]
-            ?: throw IllegalStateException(
-                "Unable to inspect ONNX input: $inputName"
-            )
+        val inputInfo =
+            session.inputInfo[inputName]
+                ?: throw IllegalStateException(
+                    "Unable to inspect ONNX input: $inputName"
+                )
 
-        val tensorInfo = inputInfo.info as? TensorInfo
-            ?: throw IllegalStateException(
-                "ONNX input is not a tensor: $inputName"
-            )
+        val tensorInfo =
+            inputInfo.info as? TensorInfo
+                ?: throw IllegalStateException(
+                    "ONNX input is not a tensor: $inputName"
+                )
 
-        val inputShape = tensorInfo.shape
+        val inputShape =
+            tensorInfo.shape
 
         require(inputShape.size == 4) {
-            "Unsupported ONNX input rank: ${inputShape.size}"
+            "Unsupported ONNX input rank: " +
+                inputShape.size
         }
 
-        val modelHeight = resolveDimension(
-            inputShape[2],
-            frame.height
-        )
+        val modelHeight =
+            resolveDimension(
+                inputShape[2],
+                512
+            )
 
-        val modelWidth = resolveDimension(
-            inputShape[3],
-            frame.width
-        )
+        val modelWidth =
+            resolveDimension(
+                inputShape[3],
+                512
+            )
 
-        require(modelWidth > 0 && modelHeight > 0) {
-            "Invalid ONNX input dimensions: ${modelWidth}x${modelHeight}"
+        require(
+            modelWidth > 0 &&
+                modelHeight > 0
+        ) {
+            "Invalid ONNX input dimensions: " +
+                "${modelWidth}x${modelHeight}"
         }
 
-        val resized = Bitmap.createScaledBitmap(
-            frame,
-            modelWidth,
-            modelHeight,
-            true
-        )
+        val resized =
+            Bitmap.createScaledBitmap(
+                frame,
+                modelWidth,
+                modelHeight,
+                true
+            )
 
         try {
-            val tensorData = bitmapToNchwFloatArray(resized)
 
-            val shape = longArrayOf(
-                1L,
-                3L,
-                modelHeight.toLong(),
-                modelWidth.toLong()
-            )
+            val tensorData =
+                bitmapToNchwFloatArray(
+                    resized
+                )
+
+            val shape =
+                longArrayOf(
+                    1L,
+                    3L,
+                    modelHeight.toLong(),
+                    modelWidth.toLong()
+                )
 
             OnnxTensor.createTensor(
                 environment,
-                FloatBuffer.wrap(tensorData),
+                FloatBuffer.wrap(
+                    tensorData
+                ),
                 shape
             ).use { inputTensor ->
 
                 session.run(
-                    mapOf(inputName to inputTensor)
+                    mapOf(
+                        inputName to inputTensor
+                    )
                 ).use { result ->
 
                     require(result.size() > 0) {
                         "ONNX model returned no output."
                     }
 
-                    return outputToBitmap(
+                    outputToBitmap(
                         result[0].value,
                         frame.width,
                         frame.height,
@@ -96,7 +127,9 @@ class OnnxAnimeEngine(
                     )
                 }
             }
+
         } finally {
+
             if (!resized.isRecycled) {
                 resized.recycle()
             }
@@ -106,11 +139,18 @@ class OnnxAnimeEngine(
     private fun bitmapToNchwFloatArray(
         bitmap: Bitmap
     ): FloatArray {
-        val width = bitmap.width
-        val height = bitmap.height
-        val pixelCount = width * height
 
-        val pixels = IntArray(pixelCount)
+        val width =
+            bitmap.width
+
+        val height =
+            bitmap.height
+
+        val pixelCount =
+            width * height
+
+        val pixels =
+            IntArray(pixelCount)
 
         bitmap.getPixels(
             pixels,
@@ -122,23 +162,37 @@ class OnnxAnimeEngine(
             height
         )
 
-        val data = FloatArray(pixelCount * 3)
+        val data =
+            FloatArray(
+                pixelCount * 3
+            )
 
         for (i in 0 until pixelCount) {
-            val pixel = pixels[i]
+
+            val pixel =
+                pixels[i]
 
             val red =
-                ((pixel shr 16) and 0xFF) / 255.0f
+                ((pixel shr 16) and 0xFF) /
+                    255.0f
 
             val green =
-                ((pixel shr 8) and 0xFF) / 255.0f
+                ((pixel shr 8) and 0xFF) /
+                    255.0f
 
             val blue =
-                (pixel and 0xFF) / 255.0f
+                (pixel and 0xFF) /
+                    255.0f
 
-            data[i] = red
-            data[pixelCount + i] = green
-            data[pixelCount * 2 + i] = blue
+            // AnimeGANv3 expects [-1, 1].
+            data[i] =
+                red * 2.0f - 1.0f
+
+            data[pixelCount + i] =
+                green * 2.0f - 1.0f
+
+            data[pixelCount * 2 + i] =
+                blue * 2.0f - 1.0f
         }
 
         return data
@@ -151,28 +205,40 @@ class OnnxAnimeEngine(
         modelWidth: Int,
         modelHeight: Int
     ): Bitmap {
-        val data = extractFloatArray(output)
 
-        val pixelCount = modelWidth * modelHeight
+        val data =
+            extractFloatArray(output)
 
-        require(data.size >= pixelCount * 3) {
-            "Unsupported ONNX output size: ${data.size}"
+        val pixelCount =
+            modelWidth * modelHeight
+
+        require(
+            data.size >=
+                pixelCount * 3
+        ) {
+            "Unsupported ONNX output size: " +
+                data.size
         }
 
-        val pixels = IntArray(pixelCount)
+        val pixels =
+            IntArray(pixelCount)
 
         for (i in 0 until pixelCount) {
-            val r = outputValueToByte(
-                data[i]
-            )
 
-            val g = outputValueToByte(
-                data[pixelCount + i]
-            )
+            val r =
+                outputValueToByte(
+                    data[i]
+                )
 
-            val b = outputValueToByte(
-                data[pixelCount * 2 + i]
-            )
+            val g =
+                outputValueToByte(
+                    data[pixelCount + i]
+                )
+
+            val b =
+                outputValueToByte(
+                    data[pixelCount * 2 + i]
+                )
 
             pixels[i] =
                 (255 shl 24) or
@@ -181,11 +247,12 @@ class OnnxAnimeEngine(
                 b
         }
 
-        val modelBitmap = Bitmap.createBitmap(
-            modelWidth,
-            modelHeight,
-            Bitmap.Config.ARGB_8888
-        )
+        val modelBitmap =
+            Bitmap.createBitmap(
+                modelWidth,
+                modelHeight,
+                Bitmap.Config.ARGB_8888
+            )
 
         modelBitmap.setPixels(
             pixels,
@@ -204,12 +271,13 @@ class OnnxAnimeEngine(
             return modelBitmap
         }
 
-        val result = Bitmap.createScaledBitmap(
-            modelBitmap,
-            outputWidth,
-            outputHeight,
-            true
-        )
+        val result =
+            Bitmap.createScaledBitmap(
+                modelBitmap,
+                outputWidth,
+                outputHeight,
+                true
+            )
 
         modelBitmap.recycle()
 
@@ -219,36 +287,46 @@ class OnnxAnimeEngine(
     private fun extractFloatArray(
         value: Any
     ): FloatArray {
+
         return when (value) {
 
-            is FloatArray -> value
+            is FloatArray ->
+                value
 
             is Array<*> -> {
-                val result = ArrayList<Float>()
 
-                fun visit(item: Any?) {
+                val result =
+                    ArrayList<Float>()
+
+                fun visit(
+                    item: Any?
+                ) {
+
                     when (item) {
 
-                        is FloatArray -> {
-                            item.forEach(result::add)
-                        }
+                        is FloatArray ->
+                            item.forEach(
+                                result::add
+                            )
 
-                        is Array<*> -> {
-                            item.forEach(::visit)
-                        }
+                        is Array<*> ->
+                            item.forEach(
+                                ::visit
+                            )
 
-                        is Number -> {
-                            result.add(item.toFloat())
-                        }
+                        is Number ->
+                            result.add(
+                                item.toFloat()
+                            )
 
                         null -> Unit
 
-                        else -> {
+                        else ->
                             throw IllegalStateException(
-                                "Unsupported ONNX output element: " +
+                                "Unsupported ONNX " +
+                                    "output element: " +
                                     item::class.java.name
                             )
-                        }
                     }
                 }
 
@@ -257,12 +335,11 @@ class OnnxAnimeEngine(
                 result.toFloatArray()
             }
 
-            else -> {
+            else ->
                 throw IllegalStateException(
                     "Unsupported ONNX output type: " +
                         value::class.java.name
                 )
-            }
         }
     }
 
@@ -270,7 +347,10 @@ class OnnxAnimeEngine(
         dimension: Long,
         fallback: Int
     ): Int {
-        return if (dimension > 0L) {
+
+        return if (
+            dimension > 0L
+        ) {
             dimension.toInt()
         } else {
             fallback
@@ -280,12 +360,10 @@ class OnnxAnimeEngine(
     private fun outputValueToByte(
         value: Float
     ): Int {
+
+        // AnimeGANv3 output is [-1, 1].
         val normalized =
-            if (value < 0.0f) {
-                (value + 1.0f) * 0.5f
-            } else {
-                value
-            }
+            (value + 1.0f) * 0.5f
 
         return (
             normalized.coerceIn(
