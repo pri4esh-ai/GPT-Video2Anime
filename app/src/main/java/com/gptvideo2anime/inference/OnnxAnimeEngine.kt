@@ -3,12 +3,14 @@ package com.gptvideo2anime.inference
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import ai.onnxruntime.TensorInfo
 import android.graphics.Bitmap
 import java.nio.FloatBuffer
 
 class OnnxAnimeEngine(
     modelPath: String
 ) : AutoCloseable {
+
     private val environment = OrtEnvironment.getEnvironment()
     private val session = environment.createSession(modelPath)
 
@@ -29,7 +31,12 @@ class OnnxAnimeEngine(
                 "Unable to inspect ONNX input: $inputName"
             )
 
-        val inputShape = inputInfo.info.shape
+        val tensorInfo = inputInfo.info as? TensorInfo
+            ?: throw IllegalStateException(
+                "ONNX input is not a tensor: $inputName"
+            )
+
+        val inputShape = tensorInfo.shape
 
         require(inputShape.size == 4) {
             "Unsupported ONNX input rank: ${inputShape.size}"
@@ -45,6 +52,10 @@ class OnnxAnimeEngine(
             frame.width
         )
 
+        require(modelWidth > 0 && modelHeight > 0) {
+            "Invalid ONNX input dimensions: ${modelWidth}x${modelHeight}"
+        }
+
         val resized = Bitmap.createScaledBitmap(
             frame,
             modelWidth,
@@ -53,8 +64,7 @@ class OnnxAnimeEngine(
         )
 
         try {
-            val tensorData =
-                bitmapToNchwFloatArray(resized)
+            val tensorData = bitmapToNchwFloatArray(resized)
 
             val shape = longArrayOf(
                 1L,
@@ -73,7 +83,7 @@ class OnnxAnimeEngine(
                     mapOf(inputName to inputTensor)
                 ).use { result ->
 
-                    require(result.size > 0) {
+                    require(result.size() > 0) {
                         "ONNX model returned no output."
                     }
 
@@ -112,9 +122,7 @@ class OnnxAnimeEngine(
             height
         )
 
-        val data = FloatArray(
-            pixelCount * 3
-        )
+        val data = FloatArray(pixelCount * 3)
 
         for (i in 0 until pixelCount) {
             val pixel = pixels[i]
@@ -145,15 +153,13 @@ class OnnxAnimeEngine(
     ): Bitmap {
         val data = extractFloatArray(output)
 
-        val pixelCount =
-            modelWidth * modelHeight
+        val pixelCount = modelWidth * modelHeight
 
         require(data.size >= pixelCount * 3) {
             "Unsupported ONNX output size: ${data.size}"
         }
 
-        val pixels =
-            IntArray(pixelCount)
+        val pixels = IntArray(pixelCount)
 
         for (i in 0 until pixelCount) {
             val r = outputValueToByte(
@@ -175,12 +181,11 @@ class OnnxAnimeEngine(
                 b
         }
 
-        val modelBitmap =
-            Bitmap.createBitmap(
-                modelWidth,
-                modelHeight,
-                Bitmap.Config.ARGB_8888
-            )
+        val modelBitmap = Bitmap.createBitmap(
+            modelWidth,
+            modelHeight,
+            Bitmap.Config.ARGB_8888
+        )
 
         modelBitmap.setPixels(
             pixels,
@@ -192,47 +197,44 @@ class OnnxAnimeEngine(
             modelHeight
         )
 
-        return if (
+        if (
             modelWidth == outputWidth &&
             modelHeight == outputHeight
         ) {
-            modelBitmap
-        } else {
-            val result =
-                Bitmap.createScaledBitmap(
-                    modelBitmap,
-                    outputWidth,
-                    outputHeight,
-                    true
-                )
-
-            modelBitmap.recycle()
-            result
+            return modelBitmap
         }
+
+        val result = Bitmap.createScaledBitmap(
+            modelBitmap,
+            outputWidth,
+            outputHeight,
+            true
+        )
+
+        modelBitmap.recycle()
+
+        return result
     }
 
     private fun extractFloatArray(
         value: Any
     ): FloatArray {
         return when (value) {
+
             is FloatArray -> value
 
             is Array<*> -> {
-                val result =
-                    ArrayList<Float>()
+                val result = ArrayList<Float>()
 
                 fun visit(item: Any?) {
                     when (item) {
+
                         is FloatArray -> {
-                            for (v in item) {
-                                result.add(v)
-                            }
+                            item.forEach(result::add)
                         }
 
                         is Array<*> -> {
-                            for (child in item) {
-                                visit(child)
-                            }
+                            item.forEach(::visit)
                         }
 
                         is Number -> {
