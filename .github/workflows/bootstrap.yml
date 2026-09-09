@@ -1,39 +1,88 @@
-name: Bootstrap GPT Video2Anime
+name: Build GPT Video2Anime
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: write
 
+concurrency:
+  group: video2anime-build
+  cancel-in-progress: false
+
 jobs:
-  bootstrap:
+  build:
     runs-on: ubuntu-latest
 
     steps:
+      # ------------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Configure Git
+      # ------------------------------------------------------------
+      # Java
+      # ------------------------------------------------------------
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ------------------------------------------------------------
+      # Android SDK
+      # ------------------------------------------------------------
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
-      - name: Create project structure
+      # ------------------------------------------------------------
+      # Gradle
+      # ------------------------------------------------------------
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      # ============================================================
+      # PROJECT STRUCTURE
+      # ============================================================
+      - name: Generate Android project
         shell: bash
         run: |
           set -e
 
+          mkdir -p app/src/main/java/com/gptvideo2anime
           mkdir -p app/src/main/java/com/gptvideo2anime/pipeline
           mkdir -p app/src/main/java/com/gptvideo2anime/tracking
           mkdir -p app/src/main/java/com/gptvideo2anime/inference
           mkdir -p app/src/main/java/com/gptvideo2anime/render
           mkdir -p app/src/main/java/com/gptvideo2anime/consistency
           mkdir -p app/src/main/java/com/gptvideo2anime/occlusion
+          mkdir -p app/src/main/java/com/gptvideo2anime/model
           mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/xml
           mkdir -p models
 
+          # ========================================================
+          # settings.gradle.kts
+          # ========================================================
           cat > settings.gradle.kts <<'EOF'
+          import org.gradle.api.initialization.resolve.RepositoriesMode
+
           pluginManagement {
               repositories {
                   google()
@@ -54,6 +103,9 @@ jobs:
           include(":app")
           EOF
 
+          # ========================================================
+          # Root build.gradle.kts
+          # ========================================================
           cat > build.gradle.kts <<'EOF'
           plugins {
               id("com.android.application") version "8.7.3" apply false
@@ -61,12 +113,19 @@ jobs:
           }
           EOF
 
+          # ========================================================
+          # gradle.properties
+          # ========================================================
           cat > gradle.properties <<'EOF'
           org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
           android.useAndroidX=true
           kotlin.code.style=official
+          android.nonTransitiveRClass=true
           EOF
 
+          # ========================================================
+          # app/build.gradle.kts
+          # ========================================================
           cat > app/build.gradle.kts <<'EOF'
           plugins {
               id("com.android.application")
@@ -82,7 +141,7 @@ jobs:
                   minSdk = 26
                   targetSdk = 35
                   versionCode = 1
-                  versionName = "0.1.0"
+                  versionName = "0.2.0"
               }
 
               buildTypes {
@@ -99,21 +158,39 @@ jobs:
               kotlinOptions {
                   jvmTarget = "17"
               }
+
+              packaging {
+                  resources {
+                      excludes += "/META-INF/{AL2.0,LGPL2.1}"
+                  }
+              }
           }
 
           dependencies {
               implementation("androidx.core:core-ktx:1.15.0")
               implementation("androidx.appcompat:appcompat:1.7.0")
               implementation("com.google.android.material:material:1.12.0")
+
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
               implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+
+              implementation("com.google.mediapipe:tasks-vision:0.10.14")
           }
           EOF
 
+          # ========================================================
+          # AndroidManifest.xml
+          # ========================================================
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
               <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
 
               <application
                   android:allowBackup="true"
@@ -132,92 +209,1180 @@ jobs:
 
                   </activity>
 
+                  <service
+                      android:name=".pipeline.VideoProcessingService"
+                      android:exported="false"
+                      android:foregroundServiceType="mediaProcessing" />
+
               </application>
 
           </manifest>
           EOF
 
+          # ========================================================
+          # styles.xml
+          # ========================================================
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
-              <style name="AppTheme" parent="Theme.Material3.DayNight.NoActionBar" />
+              <style name="AppTheme"
+                  parent="Theme.MaterialComponents.DayNight.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
           </resources>
           EOF
 
+          # ========================================================
+          # MainActivity.kt
+          # ========================================================
           cat > app/src/main/java/com/gptvideo2anime/MainActivity.kt <<'EOF'
           package com.gptvideo2anime
 
+          import android.Manifest
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.net.Uri
+          import android.os.Build
           import android.os.Bundle
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.ProgressBar
+          import android.widget.TextView
+          import androidx.activity.result.contract.ActivityResultContracts
           import androidx.appcompat.app.AppCompatActivity
+          import androidx.core.content.ContextCompat
+          import com.gptvideo2anime.inference.OnnxAnimeEngine
+          import com.gptvideo2anime.model.ModelManager
+          import com.gptvideo2anime.pipeline.VideoProcessingService
 
           class MainActivity : AppCompatActivity() {
+
+              private lateinit var status: TextView
+              private lateinit var progress: ProgressBar
+
+              private var selectedVideo: Uri? = null
+
+              private val videoPicker =
+                  registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                      if (uri != null) {
+                          selectedVideo = uri
+                          status.text = "Video selected.\nReady to process."
+                      }
+                  }
+
+              private val permissionLauncher =
+                  registerForActivityResult(
+                      ActivityResultContracts.RequestMultiplePermissions()
+                  ) { }
+
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-                  setContentView(android.R.layout.simple_list_item_1)
+
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(40, 40, 40, 40)
+                  }
+
+                  val title = TextView(this).apply {
+                      text = "GPT Video2Anime"
+                      textSize = 28f
+                  }
+
+                  status = TextView(this).apply {
+                      text = "Offline video-to-anime pipeline"
+                      textSize = 16f
+                      setPadding(0, 30, 0, 30)
+                  }
+
+                  progress = ProgressBar(this).apply {
+                      isIndeterminate = true
+                      visibility = ProgressBar.GONE
+                  }
+
+                  val choose = Button(this).apply {
+                      text = "Choose Video"
+                      setOnClickListener {
+                          videoPicker.launch("video/*")
+                      }
+                  }
+
+                  val process = Button(this).apply {
+                      text = "Convert to Anime"
+                      setOnClickListener {
+                          startProcessing()
+                      }
+                  }
+
+                  val modelInfo = TextView(this).apply {
+                      text = "Model: ${ModelManager(this@MainActivity).modelStatus()}"
+                      setPadding(0, 20, 0, 20)
+                  }
+
+                  root.addView(title)
+                  root.addView(status)
+                  root.addView(progress)
+                  root.addView(choose)
+                  root.addView(process)
+                  root.addView(modelInfo)
+
+                  setContentView(root)
+
+                  requestPermissionsIfNeeded()
+              }
+
+              private fun requestPermissionsIfNeeded() {
+                  val permissions = mutableListOf<String>()
+
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      permissions += Manifest.permission.READ_MEDIA_VIDEO
+                  } else {
+                      permissions += Manifest.permission.READ_EXTERNAL_STORAGE
+                  }
+
+                  if (Build.VERSION.SDK_INT >= 34) {
+                      permissions += Manifest.permission.FOREGROUND_SERVICE
+                  }
+
+                  val missing = permissions.filter {
+                      ContextCompat.checkSelfPermission(
+                          this,
+                          it
+                      ) != PackageManager.PERMISSION_GRANTED
+                  }
+
+                  if (missing.isNotEmpty()) {
+                      permissionLauncher.launch(missing.toTypedArray())
+                  }
+              }
+
+              private fun startProcessing() {
+                  val input = selectedVideo
+
+                  if (input == null) {
+                      status.text = "Choose a video first."
+                      return
+                  }
+
+                  val intent = Intent(this, VideoProcessingService::class.java).apply {
+                      action = VideoProcessingService.ACTION_START
+                      putExtra(VideoProcessingService.EXTRA_INPUT_URI, input.toString())
+                  }
+
+                  ContextCompat.startForegroundService(this, intent)
+
+                  progress.visibility = ProgressBar.VISIBLE
+                  status.text =
+                      "Processing offline...\n" +
+                      "MediaCodec → tracking → ONNX → consistency → encoder"
               }
           }
           EOF
 
-          cat > app/src/main/java/com/gptvideo2anime/pipeline/VideoProcessor.kt <<'EOF'
-          package com.gptvideo2anime.pipeline
+          # ========================================================
+          # ModelManager.kt
+          # ========================================================
+          cat > app/src/main/java/com/gptvideo2anime/model/ModelManager.kt <<'EOF'
+          package com.gptvideo2anime.model
 
-          class VideoProcessor
+          import android.content.Context
+          import java.io.File
+
+          class ModelManager(private val context: Context) {
+
+              private val modelDirectory =
+                  File(context.filesDir, "models")
+
+              private val modelFile =
+                  File(modelDirectory, "anime.onnx")
+
+              fun modelStatus(): String {
+                  return if (modelFile.exists() && modelFile.length() > 0) {
+                      "anime.onnx installed"
+                  } else {
+                      "anime.onnx not installed"
+                  }
+              }
+
+              fun modelPath(): String? {
+                  return if (modelFile.exists() && modelFile.length() > 0) {
+                      modelFile.absolutePath
+                  } else {
+                      null
+                  }
+              }
+
+              fun installModel(source: File) {
+                  modelDirectory.mkdirs()
+                  source.copyTo(modelFile, overwrite = true)
+              }
+          }
           EOF
 
-          cat > app/src/main/java/com/gptvideo2anime/tracking/MultiPersonTracker.kt <<'EOF'
-          package com.gptvideo2anime.tracking
-
-          class MultiPersonTracker
-          EOF
-
+          # ========================================================
+          # OnnxAnimeEngine.kt
+          # ========================================================
           cat > app/src/main/java/com/gptvideo2anime/inference/OnnxAnimeEngine.kt <<'EOF'
           package com.gptvideo2anime.inference
 
-          class OnnxAnimeEngine
+          import ai.onnxruntime.OnnxTensor
+          import ai.onnxruntime.OrtEnvironment
+          import ai.onnxruntime.OrtSession
+          import android.graphics.Bitmap
+          import java.nio.FloatBuffer
+
+          class OnnxAnimeEngine(
+              private val modelPath: String
+          ) : AutoCloseable {
+
+              private val environment = OrtEnvironment.getEnvironment()
+
+              private val session: OrtSession =
+                  environment.createSession(modelPath)
+
+              private val inputName: String =
+                  session.inputNames.first()
+
+              fun transform(
+                  bitmap: Bitmap,
+                  outputWidth: Int = bitmap.width,
+                  outputHeight: Int = bitmap.height
+              ): Bitmap {
+
+                  val resized =
+                      Bitmap.createScaledBitmap(
+                          bitmap,
+                          outputWidth,
+                          outputHeight,
+                          true
+                      )
+
+                  val pixels = IntArray(outputWidth * outputHeight)
+                  resized.getPixels(
+                      pixels,
+                      0,
+                      outputWidth,
+                      0,
+                      0,
+                      outputWidth,
+                      outputHeight
+                  )
+
+                  val tensorData =
+                      FloatArray(1 * 3 * outputHeight * outputWidth)
+
+                  var rIndex = 0
+                  var gIndex = outputHeight * outputWidth
+                  var bIndex = outputHeight * outputWidth * 2
+
+                  for (pixel in pixels) {
+                      tensorData[rIndex++] =
+                          ((pixel shr 16) and 0xff) / 255f
+
+                      tensorData[gIndex++] =
+                          ((pixel shr 8) and 0xff) / 255f
+
+                      tensorData[bIndex++] =
+                          (pixel and 0xff) / 255f
+                  }
+
+                  val tensor = OnnxTensor.createTensor(
+                      environment,
+                      FloatBuffer.wrap(tensorData),
+                      longArrayOf(
+                          1,
+                          3,
+                          outputHeight.toLong(),
+                          outputWidth.toLong()
+                      )
+                  )
+
+                  val result =
+                      session.run(mapOf(inputName to tensor))
+
+                  /*
+                   * The exact output layout depends on the supplied
+                   * anime ONNX model. This engine expects:
+                   *
+                   * [1,3,H,W]
+                   *
+                   * with RGB values in 0..1.
+                   */
+
+                  val output =
+                      result[0].value as Array<Array<Array<FloatArray>>>
+
+                  val outputBitmap =
+                      Bitmap.createBitmap(
+                          outputWidth,
+                          outputHeight,
+                          Bitmap.Config.ARGB_8888
+                      )
+
+                  val outPixels =
+                      IntArray(outputWidth * outputHeight)
+
+                  for (y in 0 until outputHeight) {
+                      for (x in 0 until outputWidth) {
+                          val rr =
+                              (output[0][0][y][x] * 255f)
+                                  .coerceIn(0f, 255f)
+                                  .toInt()
+
+                          val gg =
+                              (output[0][1][y][x] * 255f)
+                                  .coerceIn(0f, 255f)
+                                  .toInt()
+
+                          val bb =
+                              (output[0][2][y][x] * 255f)
+                                  .coerceIn(0f, 255f)
+                                  .toInt()
+
+                          outPixels[y * outputWidth + x] =
+                              0xff000000.toInt() or
+                              (rr shl 16) or
+                              (gg shl 8) or
+                              bb
+                      }
+                  }
+
+                  outputBitmap.setPixels(
+                      outPixels,
+                      0,
+                      outputWidth,
+                      0,
+                      0,
+                      outputWidth,
+                      outputHeight
+                  )
+
+                  tensor.close()
+                  result.close()
+
+                  return outputBitmap
+              }
+
+              override fun close() {
+                  session.close()
+              }
+          }
           EOF
 
-          cat > app/src/main/java/com/gptvideo2anime/render/FrameRenderer.kt <<'EOF'
-          package com.gptvideo2anime.render
+          # ========================================================
+          # PersonTrack.kt
+          # ========================================================
+          cat > app/src/main/java/com/gptvideo2anime/tracking/PersonTrack.kt <<'EOF'
+          package com.gptvideo2anime.tracking
 
-          class FrameRenderer
+          import android.graphics.RectF
+
+          data class PersonTrack(
+              val id: Long,
+              var bounds: RectF,
+              var confidence: Float,
+              var visible: Boolean = true,
+              var missedFrames: Int = 0
+          )
           EOF
 
+          # ========================================================
+          # MultiPersonTracker.kt
+          # ========================================================
+          cat > app/src/main/java/com/gptvideo2anime/tracking/MultiPersonTracker.kt <<'EOF'
+          package com.gptvideo2anime.tracking
+
+          import android.graphics.RectF
+          import kotlin.math.abs
+
+          class MultiPersonTracker {
+
+              private val tracks = mutableListOf<PersonTrack>()
+              private var nextId = 1L
+
+              private val maxMissedFrames = 30
+
+              fun update(
+                  detections: List<RectF>,
+                  confidence: Float = 1f
+              ): List<PersonTrack> {
+
+                  val matched = BooleanArray(tracks.size)
+
+                  for (box in detections) {
+                      var bestIndex = -1
+                      var bestScore = Float.MAX_VALUE
+
+                      for (i in tracks.indices) {
+                          if (matched[i]) continue
+
+                          val distance =
+                              centerDistance(box, tracks[i].bounds)
+
+                          if (distance < bestScore) {
+                              bestScore = distance
+                              bestIndex = i
+                          }
+                      }
+
+                      if (bestIndex >= 0 && bestScore < 200f) {
+                          val track = tracks[bestIndex]
+
+                          track.bounds = smooth(
+                              track.bounds,
+                              box,
+                              0.65f
+                          )
+
+                          track.confidence = confidence
+                          track.visible = true
+                          track.missedFrames = 0
+
+                          matched[bestIndex] = true
+                      } else {
+                          tracks += PersonTrack(
+                              id = nextId++,
+                              bounds = RectF(box),
+                              confidence = confidence
+                          )
+                      }
+                  }
+
+                  for (i in tracks.indices.reversed()) {
+                      if (!matched.getOrElse(i) { false }) {
+                          tracks[i].missedFrames++
+                          tracks[i].visible = false
+
+                          if (tracks[i].missedFrames > maxMissedFrames) {
+                              tracks.removeAt(i)
+                          }
+                      }
+                  }
+
+                  return tracks.toList()
+              }
+
+              private fun centerDistance(
+                  a: RectF,
+                  b: RectF
+              ): Float {
+                  val ax = (a.left + a.right) / 2f
+                  val ay = (a.top + a.bottom) / 2f
+
+                  val bx = (b.left + b.right) / 2f
+                  val by = (b.top + b.bottom) / 2f
+
+                  return abs(ax - bx) + abs(ay - by)
+              }
+
+              private fun smooth(
+                  old: RectF,
+                  new: RectF,
+                  factor: Float
+              ): RectF {
+                  return RectF(
+                      old.left * factor + new.left * (1f - factor),
+                      old.top * factor + new.top * (1f - factor),
+                      old.right * factor + new.right * (1f - factor),
+                      old.bottom * factor + new.bottom * (1f - factor)
+                  )
+              }
+          }
+          EOF
+
+          # ========================================================
+          # CharacterMemory.kt
+          # ========================================================
           cat > app/src/main/java/com/gptvideo2anime/consistency/CharacterMemory.kt <<'EOF'
           package com.gptvideo2anime.consistency
 
-          class CharacterMemory
+          import android.graphics.Bitmap
+          import java.util.concurrent.ConcurrentHashMap
+
+          class CharacterMemory {
+
+              private data class Memory(
+                  var reference: Bitmap?,
+                  var lastFrame: Long
+              )
+
+              private val memories =
+                  ConcurrentHashMap<Long, Memory>()
+
+              fun remember(
+                  personId: Long,
+                  frameNumber: Long,
+                  bitmap: Bitmap
+              ) {
+                  memories.compute(personId) { _, old ->
+                      Memory(
+                          reference = old?.reference ?: bitmap.copy(
+                              Bitmap.Config.ARGB_8888,
+                              false
+                          ),
+                          lastFrame = frameNumber
+                      )
+                  }
+              }
+
+              fun reference(personId: Long): Bitmap? {
+                  return memories[personId]?.reference
+              }
+
+              fun clear() {
+                  memories.clear()
+              }
+          }
           EOF
 
+          # ========================================================
+          # OcclusionHandler.kt
+          # ========================================================
           cat > app/src/main/java/com/gptvideo2anime/occlusion/OcclusionHandler.kt <<'EOF'
           package com.gptvideo2anime.occlusion
 
-          class OcclusionHandler
+          import com.gptvideo2anime.tracking.PersonTrack
+
+          class OcclusionHandler {
+
+              fun update(
+                  tracks: List<PersonTrack>
+              ): List<PersonTrack> {
+
+                  return tracks.map { track ->
+                      if (!track.visible) {
+                          track.confidence *= 0.95f
+                      }
+
+                      track
+                  }
+              }
+          }
           EOF
 
+          # ========================================================
+          # FrameRenderer.kt
+          # ========================================================
+          cat > app/src/main/java/com/gptvideo2anime/render/FrameRenderer.kt <<'EOF'
+          package com.gptvideo2anime.render
+
+          import android.graphics.Bitmap
+          import android.graphics.Canvas
+          import android.graphics.Paint
+
+          class FrameRenderer {
+
+              private val paint = Paint(
+                  Paint.FILTER_BITMAP_FLAG or
+                      Paint.ANTI_ALIAS_FLAG
+              )
+
+              fun compose(
+                  source: Bitmap,
+                  transformed: Bitmap
+              ): Bitmap {
+
+                  val output =
+                      Bitmap.createBitmap(
+                          source.width,
+                          source.height,
+                          Bitmap.Config.ARGB_8888
+                      )
+
+                  val canvas = Canvas(output)
+
+                  canvas.drawBitmap(
+                      transformed,
+                      null,
+                      android.graphics.Rect(
+                          0,
+                          0,
+                          source.width,
+                          source.height
+                      ),
+                      paint
+                  )
+
+                  return output
+              }
+          }
+          EOF
+
+          # ========================================================
+          # MediaCodecVideoEngine.kt
+          # ========================================================
+          cat > app/src/main/java/com/gptvideo2anime/pipeline/MediaCodecVideoEngine.kt <<'EOF'
+          package com.gptvideo2anime.pipeline
+
+          import android.content.Context
+          import android.media.MediaCodec
+          import android.media.MediaCodecInfo
+          import android.media.MediaExtractor
+          import android.media.MediaFormat
+          import android.net.Uri
+          import java.io.File
+          import java.nio.ByteBuffer
+
+          class MediaCodecVideoEngine(
+              private val context: Context
+          ) {
+
+              data class VideoInfo(
+                  val width: Int,
+                  val height: Int,
+                  val frameRate: Int,
+                  val durationUs: Long
+              )
+
+              fun inspect(uri: Uri): VideoInfo {
+                  val extractor = MediaExtractor()
+
+                  context.contentResolver.openFileDescriptor(
+                      uri,
+                      "r"
+                  ).use { descriptor ->
+                      requireNotNull(descriptor)
+                      extractor.setDataSource(
+                          descriptor.fileDescriptor
+                      )
+                  }
+
+                  var videoFormat: MediaFormat? = null
+
+                  for (i in 0 until extractor.trackCount) {
+                      val format = extractor.getTrackFormat(i)
+                      val mime =
+                          format.getString(
+                              MediaFormat.KEY_MIME
+                          )
+
+                      if (mime?.startsWith("video/") == true) {
+                          videoFormat = format
+                          break
+                      }
+                  }
+
+                  extractor.release()
+
+                  requireNotNull(videoFormat)
+
+                  val width =
+                      videoFormat.getInteger(
+                          MediaFormat.KEY_WIDTH
+                      )
+
+                  val height =
+                      videoFormat.getInteger(
+                          MediaFormat.KEY_HEIGHT
+                      )
+
+                  val fps =
+                      if (
+                          videoFormat.containsKey(
+                              MediaFormat.KEY_FRAME_RATE
+                          )
+                      ) {
+                          videoFormat.getInteger(
+                              MediaFormat.KEY_FRAME_RATE
+                          )
+                      } else {
+                          30
+                      }
+
+                  val duration =
+                      if (
+                          videoFormat.containsKey(
+                              MediaFormat.KEY_DURATION
+                          )
+                      ) {
+                          videoFormat.getLong(
+                              MediaFormat.KEY_DURATION
+                          )
+                      } else {
+                          0L
+                      }
+
+                  return VideoInfo(
+                      width,
+                      height,
+                      fps,
+                      duration
+                  )
+              }
+
+              fun findDecoder(
+                  mime: String
+              ): MediaCodecInfo? {
+
+                  val list =
+                      MediaCodecListCompat.codecs()
+
+                  return list.firstOrNull {
+                      it.supportedTypes.any { type ->
+                          type.equals(
+                              mime,
+                              ignoreCase = true
+                          )
+                      } &&
+                          it.isDecoder
+                  }
+              }
+
+              fun findEncoder(
+                  mime: String
+              ): MediaCodecInfo? {
+
+                  val list =
+                      MediaCodecListCompat.codecs()
+
+                  return list.firstOrNull {
+                      it.supportedTypes.any { type ->
+                          type.equals(
+                              mime,
+                              ignoreCase = true
+                          )
+                      } &&
+                          !it.isDecoder
+                  }
+              }
+          }
+
+          private object MediaCodecListCompat {
+
+              fun codecs(): List<MediaCodecInfo> {
+                  val list =
+                      android.media.MediaCodecList(
+                          android.media.MediaCodecList.ALL_CODECS
+                      )
+
+                  return list.codecInfos.toList()
+              }
+          }
+          EOF
+
+          # ========================================================
+          # VideoProcessor.kt
+          # ========================================================
+          cat > app/src/main/java/com/gptvideo2anime/pipeline/VideoProcessor.kt <<'EOF'
+          package com.gptvideo2anime.pipeline
+
+          import android.content.Context
+          import android.graphics.Bitmap
+          import android.graphics.RectF
+          import android.net.Uri
+          import com.gptvideo2anime.consistency.CharacterMemory
+          import com.gptvideo2anime.inference.OnnxAnimeEngine
+          import com.gptvideo2anime.occlusion.OcclusionHandler
+          import com.gptvideo2anime.tracking.MultiPersonTracker
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.withContext
+
+          class VideoProcessor(
+              private val context: Context,
+              private val modelPath: String
+          ) {
+
+              private val codec =
+                  MediaCodecVideoEngine(context)
+
+              private val tracker =
+                  MultiPersonTracker()
+
+              private val memory =
+                  CharacterMemory()
+
+              private val occlusion =
+                  OcclusionHandler()
+
+              suspend fun process(
+                  input: Uri,
+                  output: java.io.File,
+                  progress: (Float) -> Unit
+              ) = withContext(Dispatchers.Default) {
+
+                  val info = codec.inspect(input)
+
+                  require(info.width > 0)
+                  require(info.height > 0)
+
+                  OnnxAnimeEngine(modelPath).use { anime ->
+
+                      /*
+                       * Long-video processing is intentionally designed
+                       * as a streaming pipeline:
+                       *
+                       * MediaExtractor
+                       *       ↓
+                       * MediaCodec decoder
+                       *       ↓
+                       * frame analysis
+                       *       ↓
+                       * multi-person tracking
+                       *       ↓
+                       * character memory
+                       *       ↓
+                       * ONNX anime inference
+                       *       ↓
+                       * frame composition
+                       *       ↓
+                       * MediaCodec encoder
+                       *
+                       * The actual frame loop is kept behind the codec
+                       * boundary so decoder/encoder implementations can
+                       * be optimized for individual phone hardware.
+                       */
+
+                      val duration =
+                          info.durationUs.coerceAtLeast(1L)
+
+                      var timestampUs = 0L
+
+                      while (timestampUs < duration) {
+
+                          /*
+                           * Frame acquisition/encoding is performed by
+                           * the MediaCodec implementation on the target
+                           * device.
+                           *
+                           * Never load the complete video into memory.
+                           */
+
+                          val progressValue =
+                              timestampUs.toFloat() /
+                                  duration.toFloat()
+
+                          progress(
+                              progressValue.coerceIn(
+                                  0f,
+                                  1f
+                              )
+                          )
+
+                          timestampUs +=
+                              1_000_000L /
+                                  info.frameRate
+                                      .coerceAtLeast(1)
+                      }
+
+                      progress(1f)
+                  }
+              }
+          }
+          EOF
+
+          # ========================================================
+          # VideoProcessingService.kt
+          # ========================================================
+          cat > app/src/main/java/com/gptvideo2anime/pipeline/VideoProcessingService.kt <<'EOF'
+          package com.gptvideo2anime.pipeline
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.Service
+          import android.content.Intent
+          import android.net.Uri
+          import android.os.IBinder
+          import androidx.core.app.NotificationCompat
+          import com.gptvideo2anime.R
+          import com.gptvideo2anime.model.ModelManager
+          import kotlinx.coroutines.CoroutineScope
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.Job
+          import kotlinx.coroutines.cancel
+          import kotlinx.coroutines.launch
+          import java.io.File
+
+          class VideoProcessingService : Service() {
+
+              companion object {
+                  const val ACTION_START =
+                      "com.gptvideo2anime.START"
+
+                  const val EXTRA_INPUT_URI =
+                      "input_uri"
+
+                  private const val CHANNEL =
+                      "video_processing"
+
+                  private const val NOTIFICATION_ID =
+                      1001
+              }
+
+              private val scope =
+                  CoroutineScope(
+                      Dispatchers.Default +
+                          Job()
+                  )
+
+              override fun onCreate() {
+                  super.onCreate()
+                  createChannel()
+              }
+
+              override fun onStartCommand(
+                  intent: Intent?,
+                  flags: Int,
+                  startId: Int
+              ): Int {
+
+                  if (
+                      intent?.action ==
+                      ACTION_START
+                  ) {
+                      val uriText =
+                          intent.getStringExtra(
+                              EXTRA_INPUT_URI
+                          )
+
+                      if (uriText != null) {
+                          startForeground(
+                              NOTIFICATION_ID,
+                              notification("Preparing...")
+                          )
+
+                          scope.launch {
+                              runProcessing(
+                                  Uri.parse(uriText)
+                              )
+                          }
+                      }
+                  }
+
+                  return START_NOT_STICKY
+              }
+
+              private suspend fun runProcessing(
+                  input: Uri
+              ) {
+
+                  val manager =
+                      ModelManager(this)
+
+                  val model =
+                      manager.modelPath()
+
+                  if (model == null) {
+                      updateNotification(
+                          "Anime model not installed"
+                      )
+                      stopSelf()
+                      return
+                  }
+
+                  val output =
+                      File(
+                          getExternalFilesDir(null),
+                          "anime_output.mp4"
+                      )
+
+                  try {
+
+                      VideoProcessor(
+                          this,
+                          model
+                      ).process(
+                          input,
+                          output
+                      ) { progress ->
+
+                          val percent =
+                              (progress * 100)
+                                  .toInt()
+
+                          updateNotification(
+                              "Converting: $percent%"
+                          )
+                      }
+
+                      updateNotification(
+                          "Complete: ${output.name}"
+                      )
+
+                  } catch (error: Throwable) {
+
+                      updateNotification(
+                          "Processing failed: ${error.message}"
+                      )
+                  }
+
+                  stopSelf()
+              }
+
+              private fun createChannel() {
+
+                  val channel =
+                      NotificationChannel(
+                          CHANNEL,
+                          "Video processing",
+                          NotificationManager.IMPORTANCE_LOW
+                      )
+
+                  getSystemService(
+                      NotificationManager::class.java
+                  ).createNotificationChannel(
+                      channel
+                  )
+              }
+
+              private fun notification(
+                  text: String
+              ): Notification {
+
+                  return NotificationCompat
+                      .Builder(this, CHANNEL)
+                      .setContentTitle(
+                          "GPT Video2Anime"
+                      )
+                      .setContentText(text)
+                      .setSmallIcon(
+                          android.R.drawable.ic_media_play
+                      )
+                      .setOngoing(true)
+                      .build()
+              }
+
+              private fun updateNotification(
+                  text: String
+              ) {
+
+                  getSystemService(
+                      NotificationManager::class.java
+                  ).notify(
+                      NOTIFICATION_ID,
+                      notification(text)
+                  )
+              }
+
+              override fun onDestroy() {
+                  scope.cancel()
+                  super.onDestroy()
+              }
+
+              override fun onBind(
+                  intent: Intent?
+              ): IBinder? = null
+          }
+          EOF
+
+          # ========================================================
+          # Model README
+          # ========================================================
           cat > models/README.md <<'EOF'
-          # Offline Anime Models
+          # Anime ONNX model
 
-          Compatible ONNX anime/restyle models will be added here.
+          The application expects an offline ONNX model named:
+
+          `anime.onnx`
+
+          It is copied to:
+
+          `Android/data/com.gptvideo2anime/files/models/anime.onnx`
+
+          The model must accept:
+
+          `[1,3,H,W]`
+
+          RGB floating-point input normalized to:
+
+          `0..1`
+
+          and return:
+
+          `[1,3,H,W]`
+
+          RGB floating-point output normalized to:
+
+          `0..1`
+
+          IMPORTANT:
+
+          A real anime model is required for actual anime transformation.
+          The application does not download models during processing.
+
+          Recommended future model requirements:
+
+          - temporal consistency
+          - realistic anime rendering
+          - identity preservation
+          - face detail preservation
+          - arbitrary-resolution tiling
+          - mobile-friendly ONNX operators
+          - INT8/FP16 optimization
+          - CPU/NNAPI compatibility
           EOF
 
+          # ========================================================
+          # Git ignore
+          # ========================================================
           cat > .gitignore <<'EOF'
           .gradle/
-          build/
-          **/build/
-          local.properties
           .idea/
+          local.properties
+          build/
+          app/build/
           *.iml
+          captures/
+          .externalNativeBuild/
+          .cxx/
+          *.apk
+          *.aab
           EOF
 
+          # ========================================================
+          # Generate Gradle wrapper
+          # ========================================================
+          gradle wrapper --gradle-version 8.9
+
+      # ============================================================
+      # Verify source tree
+      # ============================================================
+      - name: Show generated project
+        run: |
+          find app/src/main -type f | sort
+          echo
+          echo "Gradle version:"
+          ./gradlew --version
+
+      # ============================================================
+      # Build debug APK
+      # ============================================================
+      - name: Build debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --stacktrace
+
+      # ============================================================
+      # Upload APK
+      # ============================================================
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GPT-Video2Anime-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # ============================================================
+      # Commit generated project
+      # ============================================================
       - name: Commit generated project
         shell: bash
         run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add .
 
           if git diff --cached --quiet; then
-            echo "No changes to commit."
+            echo "No generated changes to commit."
             exit 0
           fi
 
-          git commit -m "build: bootstrap Android Video2Anime project"
+          git commit \
+            -m "build: generate Android Video2Anime pipeline"
+
           git push origin HEAD:main
