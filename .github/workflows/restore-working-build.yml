@@ -1,4 +1,4 @@
-name: Restore Working Build
+name: Restore Working Main
 
 on:
   workflow_dispatch:
@@ -17,12 +17,53 @@ jobs:
         run: |
           set -e
 
+          REPO="${{ github.repository }}"
+          TARGET_SHA="fe9a776191a7463af1980c04726ad0ac71e64841"
+
+          echo "========================================"
+          echo "RESTORING MAIN"
+          echo "========================================"
+          echo
+          echo "Repository: $REPO"
+          echo "Target commit: $TARGET_SHA"
+          echo
+
+          echo "Checking target commit..."
+
+          gh api \
+            "/repos/$REPO/commits/$TARGET_SHA" \
+            --jq '.sha'
+
+          echo
+          echo "Moving main to target commit..."
+
           gh api \
             --method PATCH \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/${{ github.repository }}/git/refs/heads/main" \
-            -f sha="fe9a776191a7463af1980c04726ad0ac71e64841" \
+            "/repos/$REPO/git/refs/heads/main" \
+            -f sha="$TARGET_SHA" \
             -F force=true
 
-          echo "main restored to:"
-          echo "fe9a776191a7463af1980c04726ad0ac71e64841"
+          echo
+          echo "Verifying main..."
+
+          CURRENT_SHA="$(
+            gh api \
+              "/repos/$REPO/git/ref/heads/main" \
+              --jq '.object.sha'
+          )"
+
+          echo
+          echo "main is now:"
+          echo "$CURRENT_SHA"
+          echo
+
+          if [ "$CURRENT_SHA" != "$TARGET_SHA" ]; then
+            echo "ERROR: main was not restored correctly."
+            exit 1
+          fi
+
+          echo "========================================"
+          echo "RESTORE SUCCESSFUL"
+          echo "========================================"
+          echo
+          echo "main -> $TARGET_SHA"
