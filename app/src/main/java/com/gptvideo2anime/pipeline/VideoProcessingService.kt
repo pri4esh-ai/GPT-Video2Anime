@@ -17,12 +17,23 @@ import kotlinx.coroutines.launch
 class VideoProcessingService : Service() {
 
     companion object {
-        private const val CHANNEL_ID = "video_processing"
-        private const val NOTIFICATION_ID = 1001
+        const val ACTION_START =
+            "com.gptvideo2anime.action.START_PROCESSING"
+
+        const val EXTRA_INPUT_URI =
+            "com.gptvideo2anime.extra.INPUT_URI"
+
+        private const val CHANNEL_ID =
+            "video_processing"
+
+        private const val NOTIFICATION_ID =
+            1001
     }
 
     private val serviceScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        CoroutineScope(
+            SupervisorJob() + Dispatchers.IO
+        )
 
     private lateinit var modelManager: ModelManager
     private lateinit var videoProcessor: VideoProcessor
@@ -30,14 +41,19 @@ class VideoProcessingService : Service() {
     override fun onCreate() {
         super.onCreate()
 
-        modelManager = ModelManager(this)
-        videoProcessor = VideoProcessor(this)
+        modelManager =
+            ModelManager(this)
+
+        videoProcessor =
+            VideoProcessor(this)
 
         createNotificationChannel()
 
         startForeground(
             NOTIFICATION_ID,
-            createNotification("Preparing video processing...")
+            createNotification(
+                "Preparing video processing..."
+            )
         )
     }
 
@@ -47,72 +63,134 @@ class VideoProcessingService : Service() {
         startId: Int
     ): Int {
 
-        val inputUriString =
-            intent?.getStringExtra("input_uri")
-
-        if (inputUriString.isNullOrBlank()) {
-            updateNotification("No input video selected")
+        if (intent?.action != ACTION_START) {
             stopSelf(startId)
             return START_NOT_STICKY
         }
 
+        val inputUriString =
+            intent.getStringExtra(
+                EXTRA_INPUT_URI
+            )
+
+        if (inputUriString.isNullOrBlank()) {
+            updateNotification(
+                "No input video selected"
+            )
+
+            stopSelf(startId)
+
+            return START_NOT_STICKY
+        }
+
         serviceScope.launch {
+
             try {
-                updateNotification("Checking anime models...")
-
-                modelManager.ensureModels { model, downloaded, total ->
-                    val progressText =
-                        if (total > 0L) {
-                            val percent =
-                                (downloaded * 100L / total)
-                                    .coerceIn(0L, 100L)
-
-                            "$model: $percent%"
-                        } else {
-                            "$model: ${downloaded / (1024 * 1024)} MB"
-                        }
-
-                    updateNotification(progressText)
-                }
 
                 updateNotification(
-                    "Models ready: ${modelManager.modelStatus()}"
+                    "Checking anime models..."
+                )
+
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Starting model verification/download"
+                )
+
+                modelManager.ensureModels {
+                    model,
+                    downloaded,
+                    total ->
+
+                    val progressText =
+                        if (total > 0L) {
+
+                            val percent =
+                                (
+                                    downloaded * 100L / total
+                                ).coerceIn(
+                                    0L,
+                                    100L
+                                )
+
+                            "$model: $percent%"
+
+                        } else {
+
+                            "$model: " +
+                                "${downloaded / (1024 * 1024)} MB"
+                        }
+
+                    updateNotification(
+                        progressText
+                    )
+                }
+
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Model status: " +
+                        modelManager.modelStatus()
+                )
+
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Anime model path: " +
+                        modelManager.animeModelPath()
+                )
+
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Enhancer model path: " +
+                        modelManager.enhancerModelPath()
+                )
+
+                updateNotification(
+                    "Models ready"
                 )
 
                 val inputUri =
-                    android.net.Uri.parse(inputUriString)
+                    android.net.Uri.parse(
+                        inputUriString
+                    )
 
-                updateNotification("Inspecting video...")
+                updateNotification(
+                    "Inspecting video..."
+                )
 
                 val result =
-                    videoProcessor.process(inputUri)
+                    videoProcessor.process(
+                        inputUri
+                    )
+
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Video: " +
+                        "${result.width}x${result.height}, " +
+                        "${result.frameRate} FPS, " +
+                        result.mime
+                )
+
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Decoder available: " +
+                        result.decoderAvailable
+                )
+
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Encoder available: " +
+                        result.encoderAvailable
+                )
+
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Encoder MIME: " +
+                        result.encoderMime
+                )
 
                 updateNotification(
                     "Video ready: " +
                         "${result.width}x${result.height} " +
                         "${result.frameRate} FPS"
-                )
-
-                android.util.Log.i(
-                    "VideoProcessingService",
-                    "Anime models: ${modelManager.modelStatus()}"
-                )
-
-                android.util.Log.i(
-                    "VideoProcessingService",
-                    "Anime model: ${modelManager.animeModelPath()}"
-                )
-
-                android.util.Log.i(
-                    "VideoProcessingService",
-                    "Enhancer model: ${modelManager.enhancerModelPath()}"
-                )
-
-                android.util.Log.i(
-                    "VideoProcessingService",
-                    "Video: ${result.width}x${result.height}, " +
-                        "${result.frameRate} FPS, " +
-                        "${result.mime}"
                 )
 
             } catch (error: Exception) {
@@ -125,10 +203,14 @@ class VideoProcessingService : Service() {
 
                 updateNotification(
                     "Processing failed: " +
-                        (error.message ?: "Unknown error")
+                        (
+                            error.message
+                                ?: "Unknown error"
+                        )
                 )
 
             } finally {
+
                 stopSelf(startId)
             }
         }
@@ -141,16 +223,26 @@ class VideoProcessingService : Service() {
     ): Notification {
 
         val builder =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Notification.Builder(this, CHANNEL_ID)
+            if (
+                Build.VERSION.SDK_INT >=
+                Build.VERSION_CODES.O
+            ) {
+                Notification.Builder(
+                    this,
+                    CHANNEL_ID
+                )
             } else {
                 Notification.Builder(this)
             }
 
         return builder
-            .setContentTitle("GPT Video2Anime")
+            .setContentTitle(
+                "GPT Video2Anime"
+            )
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setSmallIcon(
+                android.R.drawable.ic_media_play
+            )
             .setOngoing(true)
             .build()
     }
@@ -158,6 +250,7 @@ class VideoProcessingService : Service() {
     private fun updateNotification(
         text: String
     ) {
+
         val manager =
             getSystemService(
                 NOTIFICATION_SERVICE
@@ -180,6 +273,7 @@ class VideoProcessingService : Service() {
             Build.VERSION.SDK_INT >=
             Build.VERSION_CODES.O
         ) {
+
             val channel =
                 NotificationChannel(
                     CHANNEL_ID,
@@ -192,7 +286,9 @@ class VideoProcessingService : Service() {
                     NOTIFICATION_SERVICE
                 ) as NotificationManager
 
-            manager.createNotificationChannel(channel)
+            manager.createNotificationChannel(
+                channel
+            )
         }
     }
 
@@ -201,7 +297,9 @@ class VideoProcessingService : Service() {
     ): IBinder? = null
 
     override fun onDestroy() {
+
         serviceScope.cancel()
+
         super.onDestroy()
     }
 }
