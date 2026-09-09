@@ -71,8 +71,7 @@ class VideoProcessingService : Service() {
     ): Int {
 
         if (
-            intent?.action !=
-            ACTION_START
+            intent?.action != ACTION_START
         ) {
 
             stopSelf(startId)
@@ -107,7 +106,6 @@ class VideoProcessingService : Service() {
                 )
 
                 modelManager.ensureModels { message ->
-
                     updateNotification(message)
                 }
 
@@ -121,33 +119,54 @@ class VideoProcessingService : Service() {
                     )
 
                 updateNotification(
-                    "Inspecting video..."
+                    "Opening video..."
                 )
 
                 val result =
                     videoProcessor.process(
                         inputUri
-                    )
+                    ) { current, total, stage ->
+
+                        val text =
+                            if (total > 0) {
+
+                                val percent =
+                                    (current * 100 / total)
+                                        .coerceIn(0, 100)
+
+                                "$stage ($percent%)"
+
+                            } else {
+
+                                stage
+                            }
+
+                        updateNotification(text)
+                    }
 
                 Log.i(
                     "VideoProcessingService",
-                    "Video: " +
-                        "${result.width}x" +
-                        "${result.height}, " +
-                        "${result.frameRate} FPS, " +
-                        result.mime
+                    "Video: ${result.width}x${result.height}"
                 )
 
                 Log.i(
                     "VideoProcessingService",
-                    "Decoder available: " +
-                        result.decoderAvailable
+                    "FPS: ${result.frameRate}"
                 )
 
                 Log.i(
                     "VideoProcessingService",
-                    "Encoder available: " +
-                        result.encoderAvailable
+                    "Decoder: ${result.decoderAvailable}"
+                )
+
+                Log.i(
+                    "VideoProcessingService",
+                    "Encoder: ${result.encoderAvailable}"
+                )
+
+                Log.i(
+                    "VideoProcessingService",
+                    "Saved preview: ${result.testFramePath}"
                 )
 
                 updateNotification(
@@ -163,11 +182,7 @@ class VideoProcessingService : Service() {
                 )
 
                 updateNotification(
-                    "Processing failed: " +
-                        (
-                            error.message
-                                ?: "Unknown error"
-                        )
+                    "Processing failed: ${error.message ?: "Unknown error"}"
                 )
 
             } finally {
@@ -185,8 +200,7 @@ class VideoProcessingService : Service() {
 
         val builder =
             if (
-                Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.O
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
             ) {
 
                 Notification.Builder(
@@ -196,9 +210,7 @@ class VideoProcessingService : Service() {
 
             } else {
 
-                Notification.Builder(
-                    this
-                )
+                Notification.Builder(this)
             }
 
         return builder
@@ -236,16 +248,8 @@ class VideoProcessingService : Service() {
     private fun createNotificationChannel() {
 
         if (
-            Build.VERSION.SDK_INT >=
-            Build.VERSION_CODES.O
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
         ) {
-
-            val channel =
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "Video Processing",
-                    NotificationManager.IMPORTANCE_LOW
-                )
 
             val manager =
                 getSystemService(
@@ -253,7 +257,11 @@ class VideoProcessingService : Service() {
                 ) as NotificationManager
 
             manager.createNotificationChannel(
-                channel
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "Video Processing",
+                    NotificationManager.IMPORTANCE_LOW
+                )
             )
         }
     }
