@@ -1,0 +1,223 @@
+name: Bootstrap GPT Video2Anime
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create project structure
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p app/src/main/java/com/gptvideo2anime/pipeline
+          mkdir -p app/src/main/java/com/gptvideo2anime/tracking
+          mkdir -p app/src/main/java/com/gptvideo2anime/inference
+          mkdir -p app/src/main/java/com/gptvideo2anime/render
+          mkdir -p app/src/main/java/com/gptvideo2anime/consistency
+          mkdir -p app/src/main/java/com/gptvideo2anime/occlusion
+          mkdir -p app/src/main/res/values
+          mkdir -p models
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "GPT-Video2Anime"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.gptvideo2anime"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.gptvideo2anime"
+                  minSdk = 26
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "0.1.0"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.15.0")
+              implementation("androidx.appcompat:appcompat:1.7.0")
+              implementation("com.google.android.material:material:1.12.0")
+              implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+
+              <application
+                  android:allowBackup="true"
+                  android:label="GPT Video2Anime"
+                  android:supportsRtl="true"
+                  android:theme="@style/AppTheme">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+
+                  </activity>
+
+              </application>
+
+          </manifest>
+          EOF
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="Theme.Material3.DayNight.NoActionBar" />
+          </resources>
+          EOF
+
+          cat > app/src/main/java/com/gptvideo2anime/MainActivity.kt <<'EOF'
+          package com.gptvideo2anime
+
+          import android.os.Bundle
+          import androidx.appcompat.app.AppCompatActivity
+
+          class MainActivity : AppCompatActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(android.R.layout.simple_list_item_1)
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/gptvideo2anime/pipeline/VideoProcessor.kt <<'EOF'
+          package com.gptvideo2anime.pipeline
+
+          class VideoProcessor
+          EOF
+
+          cat > app/src/main/java/com/gptvideo2anime/tracking/MultiPersonTracker.kt <<'EOF'
+          package com.gptvideo2anime.tracking
+
+          class MultiPersonTracker
+          EOF
+
+          cat > app/src/main/java/com/gptvideo2anime/inference/OnnxAnimeEngine.kt <<'EOF'
+          package com.gptvideo2anime.inference
+
+          class OnnxAnimeEngine
+          EOF
+
+          cat > app/src/main/java/com/gptvideo2anime/render/FrameRenderer.kt <<'EOF'
+          package com.gptvideo2anime.render
+
+          class FrameRenderer
+          EOF
+
+          cat > app/src/main/java/com/gptvideo2anime/consistency/CharacterMemory.kt <<'EOF'
+          package com.gptvideo2anime.consistency
+
+          class CharacterMemory
+          EOF
+
+          cat > app/src/main/java/com/gptvideo2anime/occlusion/OcclusionHandler.kt <<'EOF'
+          package com.gptvideo2anime.occlusion
+
+          class OcclusionHandler
+          EOF
+
+          cat > models/README.md <<'EOF'
+          # Offline Anime Models
+
+          Compatible ONNX anime/restyle models will be added here.
+          EOF
+
+          cat > .gitignore <<'EOF'
+          .gradle/
+          build/
+          **/build/
+          local.properties
+          .idea/
+          *.iml
+          EOF
+
+      - name: Commit generated project
+        shell: bash
+        run: |
+          git add .
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "build: bootstrap Android Video2Anime project"
+          git push origin HEAD:main
