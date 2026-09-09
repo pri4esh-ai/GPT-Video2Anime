@@ -12,12 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.Gravity
-import android.widget.Button
-import android.widget.FrameLayout
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
+import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -33,6 +28,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var status: TextView
     private lateinit var logs: TextView
+    private lateinit var scroll: ScrollView
     private lateinit var originalPreview: ImageView
     private lateinit var animePreview: ImageView
 
@@ -44,12 +40,16 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(
             ActivityResultContracts.GetContent()
         ) { uri ->
-            if (uri != null) {
-                selectedVideo = uri
-                status.text = "Video selected."
-                appendLog("Video selected.")
-                generatePreview(uri)
-            }
+
+            uri ?: return@registerForActivityResult
+
+            selectedVideo = uri
+
+            status.text = "Video selected."
+
+            appendLog("Video selected.")
+
+            generatePreview(uri)
         }
 
     private val permissionLauncher =
@@ -60,6 +60,7 @@ class MainActivity : AppCompatActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+
         super.onCreate(savedInstanceState)
 
         modelManager = ModelManager(this)
@@ -67,14 +68,15 @@ class MainActivity : AppCompatActivity() {
         val root =
             LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(32, 32, 32, 32)
+                setPadding(28, 28, 28, 28)
             }
 
-        val title =
+        root.addView(
             TextView(this).apply {
                 text = "GPT Video2Anime"
                 textSize = 26f
             }
+        )
 
         status =
             TextView(this).apply {
@@ -82,28 +84,32 @@ class MainActivity : AppCompatActivity() {
                 textSize = 16f
             }
 
-        val choose =
+        root.addView(status)
+
+        root.addView(
             Button(this).apply {
                 text = "Choose Video"
                 setOnClickListener {
                     videoPicker.launch("video/*")
                 }
             }
+        )
 
-        val convert =
+        root.addView(
             Button(this).apply {
                 text = "Convert To Anime"
                 setOnClickListener {
                     startVideoPipeline()
                 }
             }
+        )
 
         originalPreview =
             ImageView(this).apply {
                 layoutParams =
                     LinearLayout.LayoutParams(
                         0,
-                        280,
+                        260,
                         1f
                     )
                 scaleType = ImageView.ScaleType.CENTER_CROP
@@ -115,7 +121,7 @@ class MainActivity : AppCompatActivity() {
                 layoutParams =
                     LinearLayout.LayoutParams(
                         0,
-                        280,
+                        260,
                         1f
                     )
                 scaleType = ImageView.ScaleType.CENTER_CROP
@@ -123,30 +129,25 @@ class MainActivity : AppCompatActivity() {
             }
 
         originalPreview.setOnClickListener {
-            if (originalPreview.drawable != null) {
+            if (originalPreview.drawable != null)
                 showFullPreview(originalPreview)
-            }
         }
 
         animePreview.setOnClickListener {
-            if (animePreview.drawable != null) {
+            if (animePreview.drawable != null)
                 showFullPreview(animePreview)
-            }
         }
 
-        val previewRow =
+        val row =
             LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                layoutParams =
-                    LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    )
             }
 
-        val originalBox =
+        row.addView(
             LinearLayout(this).apply {
+
                 orientation = LinearLayout.VERTICAL
+
                 layoutParams =
                     LinearLayout.LayoutParams(
                         0,
@@ -158,16 +159,18 @@ class MainActivity : AppCompatActivity() {
                     TextView(context).apply {
                         text = "Original"
                         gravity = Gravity.CENTER
-                        textSize = 14f
                     }
                 )
 
                 addView(originalPreview)
             }
+        )
 
-        val animeBox =
+        row.addView(
             LinearLayout(this).apply {
+
                 orientation = LinearLayout.VERTICAL
+
                 layoutParams =
                     LinearLayout.LayoutParams(
                         0,
@@ -181,23 +184,23 @@ class MainActivity : AppCompatActivity() {
                     TextView(context).apply {
                         text = "Anime"
                         gravity = Gravity.CENTER
-                        textSize = 14f
                     }
                 )
 
                 addView(animePreview)
             }
+        )
 
-        previewRow.addView(originalBox)
-        previewRow.addView(animeBox)
+        root.addView(row)
 
         logs =
             TextView(this).apply {
                 textSize = 13f
             }
 
-        val scroll =
+        scroll =
             ScrollView(this).apply {
+
                 layoutParams =
                     LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
@@ -208,11 +211,6 @@ class MainActivity : AppCompatActivity() {
                 addView(logs)
             }
 
-        root.addView(title)
-        root.addView(status)
-        root.addView(choose)
-        root.addView(convert)
-        root.addView(previewRow)
         root.addView(scroll)
 
         setContentView(root)
@@ -220,22 +218,28 @@ class MainActivity : AppCompatActivity() {
         requestPermissions()
 
         lifecycleScope.launch {
+
             try {
+
                 modelManager.ensureModels { message ->
-                    runOnUiThread {
-                        appendLog(message)
-                    }
+                    appendLog(message)
                 }
 
                 runOnUiThread {
-                    status.text = modelManager.modelStatus()
+                    status.text =
+                        modelManager.modelStatus()
                 }
 
             } catch (e: Exception) {
 
                 runOnUiThread {
-                    status.text = "Model install failed"
-                    appendLog(e.message ?: "Unknown error")
+
+                    status.text =
+                        "Model install failed"
+
+                    appendLog(
+                        e.message ?: "Unknown error"
+                    )
                 }
             }
         }
@@ -243,25 +247,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestPermissions() {
 
-        val permissions = mutableListOf<String>()
+        val permission =
+            if (Build.VERSION.SDK_INT >= 33)
+                Manifest.permission.READ_MEDIA_VIDEO
+            else
+                Manifest.permission.READ_EXTERNAL_STORAGE
 
-        if (Build.VERSION.SDK_INT >= 33) {
-            permissions += Manifest.permission.READ_MEDIA_VIDEO
-        } else {
-            permissions += Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-
-        val missing =
-            permissions.filter {
-                ContextCompat.checkSelfPermission(
-                    this,
-                    it
-                ) != PackageManager.PERMISSION_GRANTED
-            }
-
-        if (missing.isNotEmpty()) {
+        if (
+            ContextCompat.checkSelfPermission(
+                this,
+                permission
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
             permissionLauncher.launch(
-                missing.toTypedArray()
+                arrayOf(permission)
             )
         }
     }
@@ -284,7 +283,7 @@ class MainActivity : AppCompatActivity() {
                 val modelPath =
                     modelManager.animeModelPath()
                         ?: throw IllegalStateException(
-                            "AnimeGANv3 not installed."
+                            "AnimeGANv3 missing."
                         )
 
                 appendLog("Running AnimeGANv3...")
@@ -299,10 +298,10 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
+                animePreview.setImageBitmap(anime)
+
                 val elapsed =
                     SystemClock.elapsedRealtime() - start
-
-                animePreview.setImageBitmap(anime)
 
                 status.text =
                     "Preview ready (${elapsed} ms)"
@@ -322,7 +321,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractFirstFrame(uri: Uri): Bitmap {
 
-        val retriever = MediaMetadataRetriever()
+        val retriever =
+            MediaMetadataRetriever()
 
         try {
 
@@ -332,7 +332,7 @@ class MainActivity : AppCompatActivity() {
                 0L,
                 MediaMetadataRetriever.OPTION_CLOSEST_SYNC
             ) ?: throw IllegalStateException(
-                "Unable to extract first frame."
+                "Unable to decode first frame."
             )
 
         } finally {
@@ -345,15 +345,19 @@ class MainActivity : AppCompatActivity() {
 
         val input =
             selectedVideo ?: run {
+
                 appendLog("Select a video first.")
+
                 return
             }
 
-        val intent =
+        ContextCompat.startForegroundService(
+            this,
             Intent(
                 this,
                 VideoProcessingService::class.java
             ).apply {
+
                 action =
                     VideoProcessingService.ACTION_START
 
@@ -362,10 +366,6 @@ class MainActivity : AppCompatActivity() {
                     input.toString()
                 )
             }
-
-        ContextCompat.startForegroundService(
-            this,
-            intent
         )
 
         appendLog("Full video pipeline started.")
@@ -379,35 +379,45 @@ class MainActivity : AppCompatActivity() {
                 android.R.style.Theme_Black_NoTitleBar_Fullscreen
             )
 
-        val container =
+        dialog.setContentView(
             FrameLayout(this).apply {
+
                 setBackgroundColor(Color.BLACK)
+
+                addView(
+                    ImageView(context).apply {
+
+                        setImageDrawable(source.drawable)
+
+                        scaleType =
+                            ImageView.ScaleType.FIT_CENTER
+
+                        layoutParams =
+                            FrameLayout.LayoutParams(
+                                FrameLayout.LayoutParams.MATCH_PARENT,
+                                FrameLayout.LayoutParams.MATCH_PARENT
+                            )
+                    }
+                )
+
+                setOnClickListener {
+                    dialog.dismiss()
+                }
             }
+        )
 
-        val preview =
-            ImageView(this).apply {
-                setImageDrawable(source.drawable)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                layoutParams =
-                    FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.MATCH_PARENT
-                    )
-            }
-
-        container.addView(preview)
-
-        container.setOnClickListener {
-            dialog.dismiss()
-        }
-
-        dialog.setContentView(container)
         dialog.show()
     }
 
     private fun appendLog(text: String) {
+
         runOnUiThread {
+
             logs.append("$text\n")
+
+            scroll.post {
+                scroll.fullScroll(ScrollView.FOCUS_DOWN)
+            }
         }
     }
 }
