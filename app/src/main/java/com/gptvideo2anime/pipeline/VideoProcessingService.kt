@@ -5,10 +5,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
-
-import androidx.core.app.NotificationCompat
-
+import com.gptvideo2anime.model.ModelManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,36 +17,27 @@ import kotlinx.coroutines.launch
 class VideoProcessingService : Service() {
 
     companion object {
-
-        const val ACTION_START =
-            "com.gptvideo2anime.START"
-
-        const val EXTRA_INPUT_URI =
-            "input_uri"
-
-        private const val CHANNEL_ID =
-            "video_processing"
-
-        private const val NOTIFICATION_ID =
-            1001
+        private const val CHANNEL_ID = "video_processing"
+        private const val NOTIFICATION_ID = 1001
     }
 
-    private val scope =
-        CoroutineScope(
-            SupervisorJob() +
-                Dispatchers.Default
-        )
+    private val serviceScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private lateinit var modelManager: ModelManager
+    private lateinit var videoProcessor: VideoProcessor
 
     override fun onCreate() {
         super.onCreate()
+
+        modelManager = ModelManager(this)
+        videoProcessor = VideoProcessor(this)
 
         createNotificationChannel()
 
         startForeground(
             NOTIFICATION_ID,
-            createNotification(
-                "GPT Video2Anime is ready"
-            )
+            createNotification("Preparing video processing...")
         )
     }
 
@@ -57,49 +47,89 @@ class VideoProcessingService : Service() {
         startId: Int
     ): Int {
 
-        if (
-            intent?.action ==
-            ACTION_START
-        ) {
+        val inputUriString =
+            intent?.getStringExtra("input_uri")
 
-            val uriString =
-                intent.getStringExtra(
-                    EXTRA_INPUT_URI
+        if (inputUriString.isNullOrBlank()) {
+            updateNotification("No input video selected")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+
+        serviceScope.launch {
+            try {
+                updateNotification("Checking anime models...")
+
+                modelManager.ensureModels { model, downloaded, total ->
+                    val progressText =
+                        if (total > 0L) {
+                            val percent =
+                                (downloaded * 100L / total)
+                                    .coerceIn(0L, 100L)
+
+                            "$model: $percent%"
+                        } else {
+                            "$model: ${downloaded / (1024 * 1024)} MB"
+                        }
+
+                    updateNotification(progressText)
+                }
+
+                updateNotification(
+                    "Models ready: ${modelManager.modelStatus()}"
                 )
 
-            if (uriString != null) {
+                val inputUri =
+                    android.net.Uri.parse(inputUriString)
 
-                scope.launch {
+                updateNotification("Inspecting video...")
 
-                    try {
+                val result =
+                    videoProcessor.process(inputUri)
 
-                        val processor =
-                            VideoProcessor(
-                                applicationContext
-                            )
+                updateNotification(
+                    "Video ready: " +
+                        "${result.width}x${result.height} " +
+                        "${result.frameRate} FPS"
+                )
 
-                        val result =
-                            processor.process(
-                                android.net.Uri.parse(
-                                    uriString
-                                )
-                            )
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Anime models: ${modelManager.modelStatus()}"
+                )
 
-                        updateNotification(
-                            "Video detected: " +
-                            "${result.width}x${result.height} " +
-                            "@ ${result.frameRate} FPS"
-                        )
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Anime model: ${modelManager.animeModelPath()}"
+                )
 
-                    } catch (error: Throwable) {
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Enhancer model: ${modelManager.enhancerModelPath()}"
+                )
 
-                        updateNotification(
-                            "Processing error: " +
-                            (error.message
-                                ?: "unknown error")
-                        )
-                    }
-                }
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Video: ${result.width}x${result.height}, " +
+                        "${result.frameRate} FPS, " +
+                        "${result.mime}"
+                )
+
+            } catch (error: Exception) {
+
+                android.util.Log.e(
+                    "VideoProcessingService",
+                    "Processing failed",
+                    error
+                )
+
+                updateNotification(
+                    "Processing failed: " +
+                        (error.message ?: "Unknown error")
+                )
+
+            } finally {
+                stopSelf(startId)
             }
         }
 
@@ -110,17 +140,17 @@ class VideoProcessingService : Service() {
         text: String
     ): Notification {
 
-        return NotificationCompat.Builder(
-            this,
-            CHANNEL_ID
-        )
-            .setContentTitle(
-                "GPT Video2Anime"
-            )
+        val builder =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, CHANNEL_ID)
+            } else {
+                Notification.Builder(this)
+            }
+
+        return builder
+            .setContentTitle("GPT Video2Anime")
             .setContentText(text)
-            .setSmallIcon(
-                android.R.drawable.ic_media_play
-            )
+            .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .build()
     }
@@ -128,45 +158,50 @@ class VideoProcessingService : Service() {
     private fun updateNotification(
         text: String
     ) {
-
         val manager =
             getSystemService(
-                NotificationManager::class.java
-            )
+                NOTIFICATION_SERVICE
+            ) as NotificationManager
 
         manager.notify(
             NOTIFICATION_ID,
             createNotification(text)
         )
+
+        android.util.Log.i(
+            "VideoProcessingService",
+            text
+        )
     }
 
     private fun createNotificationChannel() {
 
-        val manager =
-            getSystemService(
-                NotificationManager::class.java
-            )
+        if (
+            Build.VERSION.SDK_INT >=
+            Build.VERSION_CODES.O
+        ) {
+            val channel =
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "Video Processing",
+                    NotificationManager.IMPORTANCE_LOW
+                )
 
-        val channel =
-            NotificationChannel(
-                CHANNEL_ID,
-                "Video Processing",
-                NotificationManager.IMPORTANCE_LOW
-            )
+            val manager =
+                getSystemService(
+                    NOTIFICATION_SERVICE
+                ) as NotificationManager
 
-        manager.createNotificationChannel(
-            channel
-        )
-    }
-
-    override fun onDestroy() {
-
-        scope.cancel()
-
-        super.onDestroy()
+            manager.createNotificationChannel(channel)
+        }
     }
 
     override fun onBind(
         intent: Intent?
     ): IBinder? = null
+
+    override fun onDestroy() {
+        serviceScope.cancel()
+        super.onDestroy()
+    }
 }
