@@ -44,15 +44,12 @@ class VideoProcessor(
 
         onProgress(0, total, "Opening video")
 
-        val info =
-            codecEngine.inspect(uri)
+        val info = codecEngine.inspect(uri)
 
         onProgress(1, total, "Checking decoder")
 
         codecEngine.findDecoder(info.mime)
-            ?: throw IllegalStateException(
-                "No decoder for ${info.mime}"
-            )
+            ?: throw IllegalStateException("No decoder")
 
         val encoderMime =
             codecEngine.bestEncoderMime(info.mime)
@@ -60,25 +57,21 @@ class VideoProcessor(
         onProgress(2, total, "Checking encoder")
 
         codecEngine.findEncoder(encoderMime)
-            ?: throw IllegalStateException(
-                "No encoder for $encoderMime"
-            )
+            ?: throw IllegalStateException("No encoder")
 
-        val modelPath =
+        val model =
             modelManager.animeModelPath()
-                ?: throw IllegalStateException(
-                    "AnimeGANv3 model missing."
-                )
+                ?: throw IllegalStateException("JP Face model missing.")
 
         onProgress(3, total, "Extracting first frame")
 
         val frame =
             extractFirstFrame(uri)
 
-        onProgress(4, total, "Running AnimeGANv3")
+        onProgress(4, total, "Running JP Face")
 
-        val anime =
-            OnnxAnimeEngine(modelPath).use {
+        val output =
+            OnnxAnimeEngine(model).use {
                 it.processFrame(frame)
             }
 
@@ -87,9 +80,7 @@ class VideoProcessor(
         val dir =
             File(context.filesDir, "stage1")
 
-        if (!dir.exists()) {
-            dir.mkdirs()
-        }
+        dir.mkdirs()
 
         val file =
             File(dir, "anime_test_frame.png")
@@ -97,67 +88,51 @@ class VideoProcessor(
         try {
 
             file.outputStream().use {
-
-                anime.compress(
+                output.compress(
                     Bitmap.CompressFormat.PNG,
                     100,
                     it
                 )
-
-                it.flush()
             }
 
         } finally {
 
-            anime.recycle()
+            output.recycle()
             frame.recycle()
         }
 
-        Log.i(
-            "VideoProcessor",
-            "Preview saved: ${file.absolutePath}"
-        )
+        Log.i("VideoProcessor", "Saved ${file.absolutePath}")
 
         onProgress(6, total, "Finalizing")
 
-        val result =
-            ProcessingInfo(
-                width = info.width,
-                height = info.height,
-                frameRate = info.frameRate,
-                durationUs = info.durationUs,
-                mime = info.mime,
-                decoderAvailable = true,
-                encoderAvailable = true,
-                encoderMime = encoderMime,
-                testFramePath = file.absolutePath
-            )
-
         onProgress(7, total, "Complete")
 
-        return result
+        return ProcessingInfo(
+            info.width,
+            info.height,
+            info.frameRate,
+            info.durationUs,
+            info.mime,
+            true,
+            true,
+            encoderMime,
+            file.absolutePath
+        )
     }
 
-    private fun extractFirstFrame(
-        uri: Uri
-    ): Bitmap {
+    private fun extractFirstFrame(uri: Uri): Bitmap {
 
         val retriever =
             MediaMetadataRetriever()
 
         try {
 
-            retriever.setDataSource(
-                context,
-                uri
-            )
+            retriever.setDataSource(context, uri)
 
             return retriever.getFrameAtTime(
                 0L,
                 MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-            ) ?: throw IllegalStateException(
-                "Unable to extract first frame."
-            )
+            ) ?: throw IllegalStateException("No frame")
 
         } finally {
 
