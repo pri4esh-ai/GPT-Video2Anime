@@ -59,48 +59,25 @@ jobs:
           MODEL_DIR="app/src/main/assets/models"
           mkdir -p "$MODEL_DIR"
 
-          download_and_verify () {
-            NAME="$1"
-            URL="$2"
-            SHA="$3"
+          echo "Downloading AnimeGANv3 JP Face..."
 
-            TARGET="$MODEL_DIR/$NAME"
+          curl \
+            --fail \
+            --location \
+            --retry 5 \
+            --retry-delay 3 \
+            --output "$MODEL_DIR/AnimeGANv3_JP_face.onnx" \
+            "https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_JP_face.onnx"
 
-            echo
-            echo "Downloading $NAME..."
+          echo "Downloading RealESR..."
 
-            curl \
-              --fail \
-              --location \
-              --retry 5 \
-              --retry-delay 3 \
-              --output "$TARGET" \
-              "$URL"
-
-            echo "Verifying SHA-256..."
-
-            ACTUAL="$(sha256sum "$TARGET" | awk '{print $1}')"
-
-            if [ "$ACTUAL" != "$SHA" ]; then
-              echo "ERROR: SHA mismatch for $NAME"
-              echo "Expected: $SHA"
-              echo "Actual:   $ACTUAL"
-              exit 1
-            fi
-
-            echo "✓ $NAME verified"
-            ls -lh "$TARGET"
-          }
-
-          download_and_verify \
-            "AnimeGANv3_Hayao_36.onnx" \
-            "https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Hayao_36.onnx" \
-            "95ba7b219073fd5b12f569bc38056ffd3019cf4caf15b1feb9f73d1286c9f69d"
-
-          download_and_verify \
-            "RealESR-AnimeVideo-v3_x4.onnx" \
-            "https://huggingface.co/tidus2102/Real-ESRGAN/resolve/main/RealESR-AnimeVideo-v3_x4.onnx" \
-            "00ece3ac21c43ee31459216b5174b2cea0c5325044c5142aeb840f4890e175ff"
+          curl \
+            --fail \
+            --location \
+            --retry 5 \
+            --retry-delay 3 \
+            --output "$MODEL_DIR/RealESR-AnimeVideo-v3_x4.onnx" \
+            "https://huggingface.co/tidus2102/Real-ESRGAN/resolve/main/RealESR-AnimeVideo-v3_x4.onnx"
 
           echo
           echo "Bundled models:"
@@ -123,7 +100,7 @@ jobs:
           test -f app/src/main/java/com/gptvideo2anime/pipeline/VideoProcessingService.kt
           test -f app/src/main/java/com/gptvideo2anime/inference/OnnxAnimeEngine.kt
 
-          test -f app/src/main/assets/models/AnimeGANv3_Hayao_36.onnx
+          test -f app/src/main/assets/models/AnimeGANv3_JP_face.onnx
           test -f app/src/main/assets/models/RealESR-AnimeVideo-v3_x4.onnx
 
           echo "Android project validation passed."
