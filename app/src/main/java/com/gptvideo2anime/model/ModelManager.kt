@@ -5,604 +5,146 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
 
 class ModelManager(private val context: Context) {
 
     companion object {
-        private const val ANIME_MODEL_NAME =
-            "AnimeGANv3_Hayao_36.onnx"
+        private const val MODEL_DIR = "models"
 
-        private const val ANIME_MODEL_ASSET_PATH =
-            "models/AnimeGANv3_Hayao_36.onnx"
+        private const val ANIME_ASSET = "models/AnimeGANv3_Hayao_36.onnx"
+        private const val ENHANCER_ASSET = "models/RealESR-AnimeVideo-v3_x4.onnx"
 
-        private const val ANIME_MODEL_TEMP =
-            "AnimeGANv3_Hayao_36.onnx.part"
+        private const val ANIME_NAME = "AnimeGANv3_Hayao_36.onnx"
+        private const val ENHANCER_NAME = "RealESR-AnimeVideo-v3_x4.onnx"
 
-        private const val ANIME_MODEL_URL =
-            "https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Hayao_36.onnx"
-
-        private const val ANIME_MODEL_SHA256 =
+        private const val ANIME_SHA256 =
             "95ba7b219073fd5b12f569bc38056ffd3019cf4caf15b1feb9f73d1286c9f69d"
 
-        private const val ENHANCER_MODEL_NAME =
-            "RealESR-AnimeVideo-v3_x4.onnx"
-
-        private const val ENHANCER_MODEL_TEMP =
-            "RealESR-AnimeVideo-v3_x4.onnx.part"
-
-        private const val ENHANCER_MODEL_URL =
-            "https://huggingface.co/tidus2102/Real-ESRGAN/resolve/main/RealESR-AnimeVideo-v3_x4.onnx"
-
-        private const val ENHANCER_MODEL_SHA256 =
+        private const val ENHANCER_SHA256 =
             "00ece3ac21c43ee31459216b5174b2cea0c5325044c5142aeb840f4890e175ff"
-
-        private const val CONNECT_TIMEOUT_MS =
-            30_000
-
-        private const val READ_TIMEOUT_MS =
-            60_000
     }
 
-    private val modelDirectory =
-        File(context.filesDir, "models")
+    private val modelDirectory = File(context.filesDir, MODEL_DIR)
 
-    private val animeModelFile =
-        File(
-            modelDirectory,
-            ANIME_MODEL_NAME
-        )
+    private val animeFile = File(modelDirectory, ANIME_NAME)
+    private val enhancerFile = File(modelDirectory, ENHANCER_NAME)
 
-    private val animeModelTempFile =
-        File(
-            modelDirectory,
-            ANIME_MODEL_TEMP
-        )
+    fun animeModelPath(): String? =
+        if (animeFile.exists()) animeFile.absolutePath else null
 
-    private val enhancerModelFile =
-        File(
-            modelDirectory,
-            ENHANCER_MODEL_NAME
-        )
+    fun enhancerModelPath(): String? =
+        if (enhancerFile.exists()) enhancerFile.absolutePath else null
 
-    private val enhancerModelTempFile =
-        File(
-            modelDirectory,
-            ENHANCER_MODEL_TEMP
-        )
-
-    fun animeModelPath(): String? {
-        return if (isAnimeModelInstalled()) {
-            animeModelFile.absolutePath
-        } else {
-            null
-        }
-    }
-
-    fun enhancerModelPath(): String? {
-        return if (isEnhancerModelInstalled()) {
-            enhancerModelFile.absolutePath
-        } else {
-            null
-        }
-    }
-
-    fun isAnimeModelInstalled(): Boolean {
-        return isValidModel(
-            animeModelFile,
-            ANIME_MODEL_SHA256
-        )
-    }
-
-    fun isEnhancerModelInstalled(): Boolean {
-        return isValidModel(
-            enhancerModelFile,
-            ENHANCER_MODEL_SHA256
-        )
-    }
-
-    fun areAllModelsInstalled(): Boolean {
-        return isAnimeModelInstalled() &&
-            isEnhancerModelInstalled()
-    }
+    fun areAllModelsInstalled(): Boolean =
+        isValid(animeFile, ANIME_SHA256) &&
+        isValid(enhancerFile, ENHANCER_SHA256)
 
     fun modelStatus(): String {
-        val anime =
-            isAnimeModelInstalled()
-
-        val enhancer =
-            isEnhancerModelInstalled()
-
         return when {
-            anime && enhancer ->
-                "Anime models ready"
+            areAllModelsInstalled() ->
+                "AnimeGANv3 + RealESRGAN ready"
 
-            anime ->
-                "AnimeGANv3 ready; enhancer not installed"
-
-            enhancer ->
-                "Enhancer ready; AnimeGANv3 not installed"
+            animeFile.exists() ->
+                "AnimeGANv3 ready"
 
             else ->
-                "Anime models not installed"
+                "Installing bundled models..."
         }
     }
 
     suspend fun ensureModels(
-        onProgress:
-            ((model: String, downloaded: Long, total: Long) -> Unit)?
-            = null
+        onLog: ((String) -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
 
         modelDirectory.mkdirs()
 
-        /*
-         * AnimeGANv3 is bundled inside the APK by GitHub Actions.
-         *
-         * The phone does not download this model from the internet.
-         * We copy the verified APK asset into internal storage once.
-         */
-        ensureBundledAnimeModel(
-            onProgress = { copied, total ->
-                onProgress?.invoke(
-                    ANIME_MODEL_NAME,
-                    copied,
-                    total
-                )
-            }
+        copyAssetIfNeeded(
+            assetName = ANIME_ASSET,
+            target = animeFile,
+            expectedSha = ANIME_SHA256,
+            onLog = onLog
         )
 
-        /*
-         * RealESRGAN is still handled by the existing downloader.
-         * We will move this model to APK bundling in the next step.
-         */
-        if (!isEnhancerModelInstalled()) {
-            downloadModel(
-                url = ENHANCER_MODEL_URL,
-                target = enhancerModelFile,
-                temporary = enhancerModelTempFile,
-                expectedSha256 = ENHANCER_MODEL_SHA256
-            ) { downloaded, total ->
-
-                onProgress?.invoke(
-                    ENHANCER_MODEL_NAME,
-                    downloaded,
-                    total
-                )
-            }
-        }
-    }
-
-    suspend fun ensureModel(
-        onProgress:
-            ((downloaded: Long, total: Long) -> Unit)?
-            = null
-    ): File = withContext(Dispatchers.IO) {
-
-        modelDirectory.mkdirs()
-
-        ensureBundledAnimeModel(
-            onProgress = onProgress
+        copyAssetIfNeeded(
+            assetName = ENHANCER_ASSET,
+            target = enhancerFile,
+            expectedSha = ENHANCER_SHA256,
+            onLog = onLog
         )
 
-        if (!isAnimeModelInstalled()) {
-            throw IOException(
-                "Bundled AnimeGANv3 model could not be installed."
-            )
-        }
-
-        animeModelFile
+        onLog?.invoke("All models are ready.")
     }
 
-    fun deleteModels() {
-        animeModelFile.delete()
-        animeModelTempFile.delete()
-
-        enhancerModelFile.delete()
-        enhancerModelTempFile.delete()
-    }
-
-    fun totalModelSizeBytes(): Long {
-
-        val animeSize =
-            if (animeModelFile.exists()) {
-                animeModelFile.length()
-            } else {
-                0L
-            }
-
-        val enhancerSize =
-            if (enhancerModelFile.exists()) {
-                enhancerModelFile.length()
-            } else {
-                0L
-            }
-
-        return animeSize + enhancerSize
-    }
-
-    private fun ensureBundledAnimeModel(
-        onProgress:
-            ((downloaded: Long, total: Long) -> Unit)?
-            = null
+    private fun copyAssetIfNeeded(
+        assetName: String,
+        target: File,
+        expectedSha: String,
+        onLog: ((String) -> Unit)?
     ) {
 
-        if (isAnimeModelInstalled()) {
-            onProgress?.invoke(
-                animeModelFile.length(),
-                animeModelFile.length()
-            )
-
+        if (isValid(target, expectedSha)) {
+            onLog?.invoke("${target.name} already installed.")
             return
         }
 
-        modelDirectory.mkdirs()
+        onLog?.invoke("Installing ${target.name}...")
 
-        val assetManager =
-            context.assets
+        val temp = File(target.parentFile, "${target.name}.part")
 
-        val assetSize =
-            try {
-                assetManager.open(
-                    ANIME_MODEL_ASSET_PATH
-                ).use { input ->
-                    input.available().toLong()
-                }
-            } catch (e: Exception) {
-                throw IOException(
-                    "Bundled AnimeGANv3 asset not found: " +
-                        ANIME_MODEL_ASSET_PATH,
-                    e
-                )
-            }
-
-        if (assetSize <= 0L) {
-            throw IOException(
-                "Bundled AnimeGANv3 asset is empty."
-            )
-        }
-
-        if (animeModelTempFile.exists()) {
-            animeModelTempFile.delete()
-        }
-
-        var copiedBytes = 0L
-
-        assetManager.open(
-            ANIME_MODEL_ASSET_PATH
-        ).use { input ->
-
-            FileOutputStream(
-                animeModelTempFile,
-                false
-            ).use { output ->
-
-                val buffer =
-                    ByteArray(1024 * 1024)
-
-                while (true) {
-
-                    val count =
-                        input.read(buffer)
-
-                    if (count < 0) {
-                        break
-                    }
-
-                    if (count == 0) {
-                        continue
-                    }
-
-                    output.write(
-                        buffer,
-                        0,
-                        count
-                    )
-
-                    copiedBytes += count
-
-                    onProgress?.invoke(
-                        copiedBytes,
-                        assetSize
-                    )
-                }
-
-                output.flush()
+        context.assets.open(assetName).use { input ->
+            FileOutputStream(temp).use { output ->
+                input.copyTo(output)
             }
         }
 
-        if (animeModelTempFile.length() <= 0L) {
-            animeModelTempFile.delete()
+        val actualSha = sha256(temp)
 
-            throw IOException(
-                "Bundled AnimeGANv3 model is empty."
-            )
+        require(actualSha.equals(expectedSha, true)) {
+            "SHA mismatch for ${target.name}"
         }
 
-        val actualSha256 =
-            sha256(animeModelTempFile)
+        if (target.exists()) target.delete()
 
-        if (!actualSha256.equals(
-                ANIME_MODEL_SHA256,
-                ignoreCase = true
-            )
-        ) {
-
-            animeModelTempFile.delete()
-
-            throw IOException(
-                "Bundled AnimeGANv3 SHA-256 mismatch. " +
-                    "Expected=$ANIME_MODEL_SHA256 " +
-                    "Actual=$actualSha256"
-            )
+        if (!temp.renameTo(target)) {
+            temp.copyTo(target, overwrite = true)
+            temp.delete()
         }
 
-        if (animeModelFile.exists()) {
-            animeModelFile.delete()
-        }
-
-        if (!animeModelTempFile.renameTo(
-                animeModelFile
-            )
-        ) {
-
-            animeModelTempFile.copyTo(
-                animeModelFile,
-                overwrite = true
-            )
-
-            animeModelTempFile.delete()
-        }
-
-        if (!isAnimeModelInstalled()) {
-            animeModelFile.delete()
-
-            throw IOException(
-                "Installed AnimeGANv3 model failed verification."
-            )
-        }
-
-        onProgress?.invoke(
-            animeModelFile.length(),
-            animeModelFile.length()
-        )
+        onLog?.invoke("${target.name} installed.")
     }
 
-    private fun downloadModel(
-        url: String,
-        target: File,
-        temporary: File,
-        expectedSha256: String,
-        onProgress:
-            ((downloaded: Long, total: Long) -> Unit)?
-            = null
-    ) {
-
-        modelDirectory.mkdirs()
-
-        val existingBytes =
-            if (temporary.exists()) {
-                temporary.length()
-            } else {
-                0L
-            }
-
-        val connection =
-            (URL(url).openConnection()
-                as HttpURLConnection).apply {
-
-                connectTimeout =
-                    CONNECT_TIMEOUT_MS
-
-                readTimeout =
-                    READ_TIMEOUT_MS
-
-                instanceFollowRedirects =
-                    true
-
-                requestMethod =
-                    "GET"
-
-                if (existingBytes > 0L) {
-                    setRequestProperty(
-                        "Range",
-                        "bytes=$existingBytes-"
-                    )
-                }
-
-                connect()
-            }
-
-        try {
-
-            val responseCode =
-                connection.responseCode
-
-            if (responseCode !in 200..299) {
-                throw IOException(
-                    "Model download failed: HTTP $responseCode"
-                )
-            }
-
-            val append =
-                existingBytes > 0L &&
-                    responseCode ==
-                    HttpURLConnection.HTTP_PARTIAL
-
-            val startingBytes =
-                if (append) {
-                    existingBytes
-                } else {
-                    0L
-                }
-
-            if (!append &&
-                temporary.exists()
-            ) {
-                temporary.delete()
-            }
-
-            val contentLength =
-                connection.contentLengthLong
-
-            val totalLength =
-                if (contentLength > 0L) {
-                    startingBytes +
-                        contentLength
-                } else {
-                    -1L
-                }
-
-            connection.inputStream.use { input ->
-
-                FileOutputStream(
-                    temporary,
-                    append
-                ).use { output ->
-
-                    val buffer =
-                        ByteArray(
-                            1024 * 1024
-                        )
-
-                    var downloaded =
-                        startingBytes
-
-                    while (true) {
-
-                        val count =
-                            input.read(buffer)
-
-                        if (count < 0) {
-                            break
-                        }
-
-                        if (count == 0) {
-                            continue
-                        }
-
-                        output.write(
-                            buffer,
-                            0,
-                            count
-                        )
-
-                        downloaded +=
-                            count
-
-                        onProgress?.invoke(
-                            downloaded,
-                            totalLength
-                        )
-                    }
-
-                    output.flush()
-                }
-            }
-
-            if (temporary.length() <= 0L) {
-                throw IOException(
-                    "Downloaded model is empty."
-                )
-            }
-
-            val actualSha256 =
-                sha256(temporary)
-
-            if (!actualSha256.equals(
-                    expectedSha256,
-                    ignoreCase = true
-                )
-            ) {
-
-                temporary.delete()
-
-                throw IOException(
-                    "Model SHA-256 mismatch. " +
-                        "Expected=$expectedSha256 " +
-                        "Actual=$actualSha256"
-                )
-            }
-
-            if (target.exists()) {
-                target.delete()
-            }
-
-            if (!temporary.renameTo(target)) {
-
-                temporary.copyTo(
-                    target,
-                    overwrite = true
-                )
-
-                temporary.delete()
-            }
-
-        } finally {
-            connection.disconnect()
-        }
-    }
-
-    private fun isValidModel(
+    private fun isValid(
         file: File,
-        expectedSha256: String
+        expectedSha: String
     ): Boolean {
 
-        if (!file.exists()) {
-            return false
-        }
-
-        if (file.length() <= 0L) {
-            return false
-        }
+        if (!file.exists()) return false
+        if (file.length() <= 0L) return false
 
         return try {
-
-            sha256(file).equals(
-                expectedSha256,
-                ignoreCase = true
-            )
-
+            sha256(file).equals(expectedSha, true)
         } catch (_: Exception) {
-
             false
         }
     }
 
-    private fun sha256(
-        file: File
-    ): String {
+    private fun sha256(file: File): String {
 
-        val digest =
-            MessageDigest.getInstance(
-                "SHA-256"
-            )
+        val digest = MessageDigest.getInstance("SHA-256")
 
         file.inputStream().use { input ->
 
-            val buffer =
-                ByteArray(
-                    1024 * 1024
-                )
+            val buffer = ByteArray(1024 * 1024)
 
             while (true) {
 
-                val count =
-                    input.read(buffer)
+                val count = input.read(buffer)
 
-                if (count < 0) {
-                    break
-                }
+                if (count < 0) break
 
                 if (count > 0) {
-                    digest.update(
-                        buffer,
-                        0,
-                        count
-                    )
+                    digest.update(buffer, 0, count)
                 }
             }
         }
