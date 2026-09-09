@@ -40,37 +40,36 @@ class VideoProcessor(
         ) -> Unit
     ): ProcessingInfo {
 
-        Log.i("VideoProcessor", "Stage 1: Opening video")
-        onProgress(0, 7, "Opening video")
+        val totalSteps = 7
 
-        val info =
-            codecEngine.inspect(uri)
+        Log.i("VideoProcessor", "Stage 1: Opening video")
+        onProgress(0, totalSteps, "Opening video")
+
+        val info = codecEngine.inspect(uri)
 
         Log.i(
             "VideoProcessor",
             "Video ${info.width}x${info.height} ${info.frameRate} FPS"
         )
 
-        onProgress(1, 7, "Finding decoder")
+        onProgress(1, totalSteps, "Finding decoder")
 
         val decoder =
             codecEngine.findDecoder(info.mime)
+                ?: throw IllegalStateException(
+                    "No decoder for ${info.mime}"
+                )
 
-        check(decoder != null) {
-            "No decoder for ${info.mime}"
-        }
+        onProgress(2, totalSteps, "Finding encoder")
 
         val encoderMime =
             codecEngine.bestEncoderMime(info.mime)
 
-        onProgress(2, 7, "Finding encoder")
-
         val encoder =
             codecEngine.findEncoder(encoderMime)
-
-        check(encoder != null) {
-            "No encoder for $encoderMime"
-        }
+                ?: throw IllegalStateException(
+                    "No encoder for $encoderMime"
+                )
 
         val modelPath =
             modelManager.animeModelPath()
@@ -78,52 +77,70 @@ class VideoProcessor(
                     "AnimeGANv3 model missing."
                 )
 
-        onProgress(3, 7, "Extracting first frame")
+        onProgress(3, totalSteps, "Extracting first frame")
 
         val frame =
             extractFirstFrame(uri)
 
         Log.i("VideoProcessor", "First frame extracted")
 
-        onProgress(4, 7, "Running AnimeGANv3")
+        onProgress(4, totalSteps, "Running AnimeGANv3")
 
         val animeFrame =
-            OnnxAnimeEngine(modelPath).use {
-                it.processFrame(frame)
+            OnnxAnimeEngine(modelPath).use { engine ->
+                engine.processFrame(frame)
             }
 
         Log.i("VideoProcessor", "AnimeGAN finished")
 
-        onProgress(5, 7, "Saving preview")
+        onProgress(5, totalSteps, "Saving preview")
 
         val outputDir =
             File(context.filesDir, "stage1")
 
-        outputDir.mkdirs()
-
-        val outputFile =
-            File(
-                outputDir,
-                "anime_test_frame.png"
-            )
-
-        outputFile.outputStream().use {
-            animeFrame.compress(
-                Bitmap.CompressFormat.PNG,
-                100,
-                it
-            )
+        if (!outputDir.exists()) {
+            outputDir.mkdirs()
         }
 
-        animeFrame.recycle()
-        frame.recycle()
+        val outputFile =
+            File(outputDir, "anime_test_frame.png")
+
+        try {
+
+            outputFile.outputStream().use { output ->
+
+                if (
+                    !animeFrame.compress(
+                        Bitmap.CompressFormat.PNG,
+                        100,
+                        output
+                    )
+                ) {
+                    throw IllegalStateException(
+                        "Failed to save preview."
+                    )
+                }
+
+                output.flush()
+            }
+
+        } finally {
+
+            if (!animeFrame.isRecycled) {
+                animeFrame.recycle()
+            }
+
+            if (!frame.isRecycled) {
+                frame.recycle()
+            }
+        }
 
         Log.i(
             "VideoProcessor",
             "Preview saved: ${outputFile.absolutePath}"
         )
 
-        onProgress(6, 7, "Finalizing")
+        onProgress(6, totalSteps, "Finalizing")
 
         val result =
             ProcessingInfo(
@@ -132,15 +149,15 @@ class VideoProcessor(
                 frameRate = info.frameRate,
                 durationUs = info.durationUs,
                 mime = info.mime,
-                decoderAvailable = true,
-                encoderAvailable = true,
+                decoderAvailable = decoder != null,
+                encoderAvailable = encoder != null,
                 encoderMime = encoderMime,
                 testFramePath = outputFile.absolutePath
             )
 
         Log.i("VideoProcessor", "Stage 1 complete")
 
-        onProgress(7, 7, "Complete")
+        onProgress(7, totalSteps, "Complete")
 
         return result
     }
