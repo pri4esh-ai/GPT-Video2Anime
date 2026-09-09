@@ -3,37 +3,51 @@ package com.gptvideo2anime
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import com.gptvideo2anime.inference.OnnxAnimeEngine
 import com.gptvideo2anime.model.ModelManager
+import com.gptvideo2anime.pipeline.FirstFrameExtractor
 import com.gptvideo2anime.pipeline.VideoProcessingService
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
-    companion object {
-        private const val ACTION_START =
-            "com.gptvideo2anime.action.START_PROCESSING"
-        private const val EXTRA_INPUT_URI =
-            "com.gptvideo2anime.extra.INPUT_URI"
-    }
-
     private lateinit var status: TextView
+    private lateinit var logs: TextView
+    private lateinit var originalPreview: ImageView
+    private lateinit var animePreview: ImageView
+
+    private lateinit var modelManager: ModelManager
+
     private var selectedVideo: Uri? = null
 
     private val videoPicker =
         registerForActivityResult(
             ActivityResultContracts.GetContent()
         ) { uri ->
+
             if (uri != null) {
+
                 selectedVideo = uri
-                status.text = "Video selected.\nReady to process."
+
+                status.text = "Video selected."
+
+                appendLog("Video selected.")
+
+                generatePreview(uri)
             }
         }
 
@@ -41,61 +55,107 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) {
-            status.text = "Permissions checked.\nChoose a video."
+            appendLog("Permissions granted.")
         }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+    override fun onCreate(
+        savedInstanceState: Bundle?
+    ) {
         super.onCreate(savedInstanceState)
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(40, 40, 40, 40)
-        }
+        modelManager = ModelManager(this)
 
-        val title = TextView(this).apply {
-            text = "GPT Video2Anime"
-            textSize = 28f
-        }
-
-        status = TextView(this).apply {
-            text = "Offline video-to-anime pipeline"
-            textSize = 16f
-            setPadding(0, 30, 0, 30)
-        }
-
-        val choose = Button(this).apply {
-            text = "Choose Video"
-            setOnClickListener {
-                videoPicker.launch("video/*")
+        val root =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(32, 32, 32, 32)
             }
-        }
 
-        val process = Button(this).apply {
-            text = "Convert to Anime"
-            setOnClickListener {
-                startProcessing()
+        val title =
+            TextView(this).apply {
+                text = "GPT Video2Anime"
+                textSize = 26f
             }
-        }
 
-        val model = TextView(this).apply {
-            text = "Model: ${
-                ModelManager(this@MainActivity).modelStatus()
-            }"
-            setPadding(0, 20, 0, 20)
-        }
+        status =
+            TextView(this).apply {
+                text = "Preparing models..."
+                textSize = 16f
+            }
+
+        val choose =
+            Button(this).apply {
+                text = "Choose Video"
+                setOnClickListener {
+                    videoPicker.launch("video/*")
+                }
+            }
+
+        val convert =
+            Button(this).apply {
+                text = "Convert To Anime"
+                setOnClickListener {
+                    startVideoPipeline()
+                }
+            }
+
+        originalPreview =
+            ImageView(this).apply {
+                adjustViewBounds = true
+            }
+
+        animePreview =
+            ImageView(this).apply {
+                adjustViewBounds = true
+            }
+
+        logs =
+            TextView(this).apply {
+                textSize = 13f
+            }
+
+        val scroll =
+            ScrollView(this).apply {
+                addView(logs)
+            }
 
         root.addView(title)
         root.addView(status)
         root.addView(choose)
-        root.addView(process)
-        root.addView(model)
+        root.addView(convert)
+        root.addView(originalPreview)
+        root.addView(animePreview)
+        root.addView(scroll)
 
         setContentView(root)
-        requestPermissionsIfNeeded()
+
+        requestPermissions()
+
+        lifecycleScope.launch {
+
+            try {
+
+                modelManager.ensureModels { message ->
+                    runOnUiThread {
+                        appendLog(message)
+                    }
+                }
+
+                status.text = modelManager.modelStatus()
+
+            } catch (e: Exception) {
+
+                status.text = "Model install failed"
+
+                appendLog(e.message ?: "Unknown error")
+            }
+        }
     }
 
-    private fun requestPermissionsIfNeeded() {
-        val permissions = mutableListOf<String>()
+    private fun requestPermissions() {
+
+        val permissions =
+            mutableListOf<String>()
 
         if (Build.VERSION.SDK_INT >= 33) {
             permissions += Manifest.permission.READ_MEDIA_VIDEO
@@ -103,44 +163,112 @@ class MainActivity : AppCompatActivity() {
             permissions += Manifest.permission.READ_EXTERNAL_STORAGE
         }
 
-        val missing = permissions.filter {
-            ContextCompat.checkSelfPermission(
-                this,
-                it
-            ) != PackageManager.PERMISSION_GRANTED
-        }
+        val missing =
+            permissions.filter {
+
+                ContextCompat.checkSelfPermission(
+                    this,
+                    it
+                ) != PackageManager.PERMISSION_GRANTED
+            }
 
         if (missing.isNotEmpty()) {
-            permissionLauncher.launch(missing.toTypedArray())
+            permissionLauncher.launch(
+                missing.toTypedArray()
+            )
         }
     }
 
-    private fun startProcessing() {
-        val input = selectedVideo
+    private fun generatePreview(
+        uri: Uri
+    ) {
 
-        if (input == null) {
-            status.text = "Choose a video first."
-            return
-        }
+        lifecycleScope.launch {
 
-        val intent = Intent(
-            this,
-            VideoProcessingService::class.java
-        ).apply {
-            action = ACTION_START
-            putExtra(
-                EXTRA_INPUT_URI,
-                input.toString()
-            )
+            try {
+
+                appendLog("Extracting first frame...")
+
+                val frame =
+                    FirstFrameExtractor.extract(
+                        this@MainActivity,
+                        uri
+                    )
+
+                originalPreview.setImageBitmap(frame)
+
+                appendLog("Loading AnimeGANv3...")
+
+                val modelPath =
+                    modelManager.animeModelPath()
+                        ?: throw IllegalStateException(
+                            "Anime model missing."
+                        )
+
+                val start =
+                    SystemClock.elapsedRealtime()
+
+                val anime =
+                    OnnxAnimeEngine(modelPath).use {
+
+                        it.processFrame(frame)
+                    }
+
+                val elapsed =
+                    SystemClock.elapsedRealtime() - start
+
+                animePreview.setImageBitmap(anime)
+
+                status.text =
+                    "Preview ready (${elapsed} ms)"
+
+                appendLog(
+                    "Inference completed in ${elapsed} ms"
+                )
+
+            } catch (e: Exception) {
+
+                status.text = "Preview failed"
+
+                appendLog(
+                    "ERROR: ${e.message}"
+                )
+            }
         }
+    }
+
+    private fun startVideoPipeline() {
+
+        val input =
+            selectedVideo ?: return
+
+        val intent =
+            Intent(
+                this,
+                VideoProcessingService::class.java
+            ).apply {
+
+                action =
+                    VideoProcessingService.ACTION_START
+
+                putExtra(
+                    VideoProcessingService.EXTRA_INPUT_URI,
+                    input.toString()
+                )
+            }
 
         ContextCompat.startForegroundService(
             this,
             intent
         )
 
-        status.text =
-            "Processing started.\n" +
-                "MediaCodec pipeline is running."
+        appendLog("Full video pipeline started.")
+    }
+
+    private fun appendLog(
+        text: String
+    ) {
+
+        logs.append(text + "\n")
     }
 }
