@@ -17,7 +17,8 @@ class VideoProcessor(
         val durationUs: Long,
         val mime: String,
         val decoderAvailable: Boolean,
-        val encoderAvailable: Boolean
+        val encoderAvailable: Boolean,
+        val encoderMime: String
     )
 
     fun inspect(
@@ -33,14 +34,9 @@ class VideoProcessor(
             )
 
         val encoderMime =
-            when (info.mime) {
-                "video/avc" -> "video/avc"
-                "video/hevc" -> "video/hevc"
-                "video/x-vnd.on2.vp9" ->
-                    "video/x-vnd.on2.vp9"
-                else ->
-                    "video/avc"
-            }
+            codecEngine.bestEncoderMime(
+                info.mime
+            )
 
         val encoder =
             codecEngine.findEncoder(
@@ -56,39 +52,25 @@ class VideoProcessor(
             decoderAvailable =
                 decoder != null,
             encoderAvailable =
-                encoder != null
+                encoder != null,
+            encoderMime =
+                encoderMime
         )
     }
 
     fun process(
         uri: Uri
     ): ProcessingInfo {
+        val result = inspect(uri)
 
-        /*
-         * Foundation stage:
-         *
-         * 1. Inspect video.
-         * 2. Verify hardware decoder.
-         * 3. Verify encoder.
-         *
-         * The next pipeline stage will connect:
-         *
-         * MediaCodec decoder
-         *       ↓
-         * frame preprocessing
-         *       ↓
-         * MediaPipe tracking
-         *       ↓
-         * character memory
-         *       ↓
-         * ONNX anime model
-         *       ↓
-         * occlusion handling
-         *       ↓
-         * frame renderer
-         *       ↓
-         * MediaCodec encoder
-         */
-        return inspect(uri)
+        check(result.decoderAvailable) {
+            "No compatible video decoder found for ${result.mime}"
+        }
+
+        check(result.encoderAvailable) {
+            "No compatible video encoder found for ${result.encoderMime}"
+        }
+
+        return result
     }
 }
