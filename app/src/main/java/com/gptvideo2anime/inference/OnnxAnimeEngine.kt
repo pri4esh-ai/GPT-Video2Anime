@@ -4,399 +4,209 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.TensorInfo
 import android.graphics.Bitmap
-import android.util.Log
 import java.nio.FloatBuffer
 
 class OnnxAnimeEngine(
     modelPath: String
 ) : AutoCloseable {
 
-    private val environment =
+    private val env =
         OrtEnvironment.getEnvironment()
 
     private val session =
-        environment.createSession(modelPath)
-
-    fun inputNames(): Set<String> =
-        session.inputNames
-
-    fun outputNames(): Set<String> =
-        session.outputNames
+        env.createSession(modelPath)
 
     fun processFrame(
         frame: Bitmap
     ): Bitmap {
 
-        require(!frame.isRecycled) {
-            "Input frame is recycled."
-        }
-
         val inputName =
-            session.inputNames.firstOrNull()
-                ?: throw IllegalStateException(
-                    "ONNX model has no input."
-                )
+            session.inputNames.first()
 
-        val tensorInfo =
-            (session.inputInfo[inputName]?.info as? TensorInfo)
-                ?: throw IllegalStateException(
-                    "Unable to inspect ONNX input."
-                )
+        val info =
+            session.inputInfo[inputName]!!.info as TensorInfo
 
-        val inputShape =
-            tensorInfo.shape
+        val shape =
+            info.shape
 
-        require(inputShape.size == 4) {
-            "Unsupported ONNX input rank: ${inputShape.size}"
-        }
+        val nchw =
+            shape[1] == 3L
 
-        val isNchw =
-            inputShape[1] == 3L
+        val h =
+            if (nchw) shape[2].toInt() else shape[1].toInt()
 
-        val modelHeight =
-            resolveDimension(
-                if (isNchw) inputShape[2] else inputShape[1],
-                512
-            )
-
-        val modelWidth =
-            resolveDimension(
-                if (isNchw) inputShape[3] else inputShape[2],
-                512
-            )
+        val w =
+            if (nchw) shape[3].toInt() else shape[2].toInt()
 
         val resized =
-            Bitmap.createScaledBitmap(
-                frame,
-                modelWidth,
-                modelHeight,
-                true
-            )
+            Bitmap.createScaledBitmap(frame, w, h, true)
 
-        try {
+        val tensor =
+            if (nchw)
+                bitmapToNCHW(resized)
+            else
+                bitmapToNHWC(resized)
 
-            val tensorData =
-                if (isNchw) {
-                    bitmapToNchwFloatArray(resized)
-                } else {
-                    bitmapToNhwcFloatArray(resized)
-                }
+        val tensorShape =
+            if (nchw)
+                longArrayOf(1, 3, h.toLong(), w.toLong())
+            else
+                longArrayOf(1, h.toLong(), w.toLong(), 3)
 
-            val shape =
-                if (isNchw) {
-                    longArrayOf(
-                        1L,
-                        3L,
-                        modelHeight.toLong(),
-                        modelWidth.toLong()
-                    )
-                } else {
-                    longArrayOf(
-                        1L,
-                        modelHeight.toLong(),
-                        modelWidth.toLong(),
-                        3L
-                    )
-                }
+        OnnxTensor.createTensor(
+            env,
+            FloatBuffer.wrap(tensor),
+            tensorShape
+        ).use { input ->
 
-            Log.i(
-                "OnnxAnimeEngine",
-                "Input tensor=${shape.contentToString()} layout=${if (isNchw) "NCHW" else "NHWC"}"
-            )
+            session.run(
+                mapOf(inputName to input)
+            ).use {
 
-            OnnxTensor.createTensor(
-                environment,
-                FloatBuffer.wrap(tensorData),
-                shape
-            ).use { inputTensor ->
-
-                session.run(
-                    mapOf(
-                        inputName to inputTensor
-                    )
-                ).use { result ->
-
-                    require(result.size() > 0) {
-                        "ONNX model returned no output."
-                    }
-
-                    return outputToBitmap(
-                        result[0].value,
-                        frame.width,
-                        frame.height,
-                        modelWidth,
-                        modelHeight
-                    )
-                }
-            }
-
-        } finally {
-
-            if (!resized.isRecycled) {
-                resized.recycle()
+                return outputBitmap(
+                    it[0].value,
+                    frame.width,
+                    frame.height,
+                    w,
+                    h
+                )
             }
         }
     }
 
-    private fun bitmapToNchwFloatArray(
-        bitmap: Bitmap
-    ): FloatArray {
+    private fun bitmapToNCHW(bitmap: Bitmap): FloatArray {
 
-        val width = bitmap.width
-        val height = bitmap.height
-        val pixelCount = width * height
+        val w = bitmap.width
+        val h = bitmap.height
 
-        val pixels = IntArray(pixelCount)
+        val pixels =
+            IntArray(w * h)
 
         bitmap.getPixels(
             pixels,
             0,
-            width,
+            w,
             0,
             0,
-            width,
-            height
+            w,
+            h
         )
 
-        val data =
-            FloatArray(pixelCount * 3)
+        val out =
+            FloatArray(w * h * 3)
 
-        for (i in 0 until pixelCount) {
+        for (i in pixels.indices) {
 
             val p = pixels[i]
 
-            val r =
-                ((p shr 16) and 0xFF) / 255f
+            out[i] =
+                (((p shr 16) and 255) / 255f) * 2f - 1f
 
-            val g =
-                ((p shr 8) and 0xFF) / 255f
+            out[w * h + i] =
+                (((p shr 8) and 255) / 255f) * 2f - 1f
 
-            val b =
-                (p and 0xFF) / 255f
-
-            data[i] =
-                r * 2f - 1f
-
-            data[pixelCount + i] =
-                g * 2f - 1f
-
-            data[pixelCount * 2 + i] =
-                b * 2f - 1f
+            out[w * h * 2 + i] =
+                ((p and 255) / 255f) * 2f - 1f
         }
 
-        return data
+        return out
     }
 
-    private fun bitmapToNhwcFloatArray(
-        bitmap: Bitmap
-    ): FloatArray {
+    private fun bitmapToNHWC(bitmap: Bitmap): FloatArray {
 
-        val width = bitmap.width
-        val height = bitmap.height
+        val w = bitmap.width
+        val h = bitmap.height
 
         val pixels =
-            IntArray(width * height)
+            IntArray(w * h)
 
         bitmap.getPixels(
             pixels,
             0,
-            width,
+            w,
             0,
             0,
-            width,
-            height
+            w,
+            h
         )
 
-        val data =
-            FloatArray(width * height * 3)
+        val out =
+            FloatArray(w * h * 3)
 
-        var index = 0
+        var j = 0
 
         for (p in pixels) {
 
-            data[index++] =
-                (((p shr 16) and 0xFF) / 255f) * 2f - 1f
+            out[j++] =
+                (((p shr 16) and 255) / 255f) * 2f - 1f
 
-            data[index++] =
-                (((p shr 8) and 0xFF) / 255f) * 2f - 1f
+            out[j++] =
+                (((p shr 8) and 255) / 255f) * 2f - 1f
 
-            data[index++] =
-                ((p and 0xFF) / 255f) * 2f - 1f
+            out[j++] =
+                ((p and 255) / 255f) * 2f - 1f
         }
 
-        return data
+        return out
     }
 
-    private fun outputToBitmap(
-        output: Any,
-        outputWidth: Int,
-        outputHeight: Int,
-        modelWidth: Int,
-        modelHeight: Int
+    private fun outputBitmap(
+        value: Any,
+        outW: Int,
+        outH: Int,
+        w: Int,
+        h: Int
     ): Bitmap {
 
         val data =
-            extractFloatArray(output)
-
-        val pixelCount =
-            modelWidth * modelHeight
+            (value as Array<Array<Array<FloatArray>>>)[0]
 
         val pixels =
-            IntArray(pixelCount)
+            IntArray(w * h)
 
-        val isNchwOutput =
-            data.size >= pixelCount * 3 &&
-                data.size % 3 == 0 &&
-                data.size != pixelCount * 3
+        var i = 0
 
-        if (isNchwOutput) {
+        for (y in 0 until h) {
 
-            for (i in 0 until pixelCount) {
+            for (x in 0 until w) {
 
                 val r =
-                    outputValueToByte(data[i])
+                    ((data[y][x][0] + 1f) * 127.5f).toInt().coerceIn(0, 255)
 
                 val g =
-                    outputValueToByte(data[pixelCount + i])
+                    ((data[y][x][1] + 1f) * 127.5f).toInt().coerceIn(0, 255)
 
                 val b =
-                    outputValueToByte(data[pixelCount * 2 + i])
+                    ((data[y][x][2] + 1f) * 127.5f).toInt().coerceIn(0, 255)
 
-                pixels[i] =
-                    (255 shl 24) or
-                        (r shl 16) or
-                        (g shl 8) or
-                        b
-            }
-
-        } else {
-
-            for (i in 0 until pixelCount) {
-
-                val base = i * 3
-
-                val r =
-                    outputValueToByte(data[base])
-
-                val g =
-                    outputValueToByte(data[base + 1])
-
-                val b =
-                    outputValueToByte(data[base + 2])
-
-                pixels[i] =
-                    (255 shl 24) or
-                        (r shl 16) or
-                        (g shl 8) or
-                        b
+                pixels[i++] =
+                    -0x1000000 or (r shl 16) or (g shl 8) or b
             }
         }
 
-        val modelBitmap =
+        val bmp =
             Bitmap.createBitmap(
-                modelWidth,
-                modelHeight,
+                w,
+                h,
                 Bitmap.Config.ARGB_8888
             )
 
-        modelBitmap.setPixels(
+        bmp.setPixels(
             pixels,
             0,
-            modelWidth,
+            w,
             0,
             0,
-            modelWidth,
-            modelHeight
+            w,
+            h
         )
 
-        if (
-            modelWidth == outputWidth &&
-                modelHeight == outputHeight
-        ) {
-            return modelBitmap
-        }
-
-        val scaled =
-            Bitmap.createScaledBitmap(
-                modelBitmap,
-                outputWidth,
-                outputHeight,
-                true
-            )
-
-        modelBitmap.recycle()
-
-        return scaled
-    }
-
-    private fun extractFloatArray(
-        value: Any
-    ): FloatArray {
-
-        return when (value) {
-
-            is FloatArray ->
-                value
-
-            is Array<*> -> {
-
-                val list =
-                    ArrayList<Float>()
-
-                fun visit(v: Any?) {
-
-                    when (v) {
-
-                        is FloatArray ->
-                            v.forEach(list::add)
-
-                        is Array<*> ->
-                            v.forEach(::visit)
-
-                        is Number ->
-                            list.add(v.toFloat())
-
-                        null -> {}
-
-                        else ->
-                            throw IllegalStateException(
-                                "Unsupported output element: ${v::class.java.name}"
-                            )
-                    }
-                }
-
-                visit(value)
-
-                list.toFloatArray()
-            }
-
-            else ->
-                throw IllegalStateException(
-                    "Unsupported output type: ${value::class.java.name}"
-                )
-        }
-    }
-
-    private fun resolveDimension(
-        dimension: Long,
-        fallback: Int
-    ): Int {
-
-        return if (dimension > 0L) {
-            dimension.toInt()
-        } else {
-            fallback
-        }
-    }
-
-    private fun outputValueToByte(
-        value: Float
-    ): Int {
-
-        return (
-            ((value + 1f) * 0.5f)
-                .coerceIn(0f, 1f) * 255f
-            ).toInt()
+        return Bitmap.createScaledBitmap(
+            bmp,
+            outW,
+            outH,
+            true
+        )
     }
 
     override fun close() {
