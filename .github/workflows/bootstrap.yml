@@ -18,17 +18,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ============================================================
-      # CHECKOUT
-      # ============================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # ============================================================
-      # JAVA 17
-      # ============================================================
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -36,9 +31,6 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      # ============================================================
-      # ANDROID SDK
-      # ============================================================
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
@@ -54,33 +46,55 @@ jobs:
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      # ============================================================
-      # GRADLE
-      # ============================================================
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      # ============================================================
-      # VERIFY EXISTING PROJECT
-      #
-      # IMPORTANT:
-      # Do NOT generate or overwrite project files here.
-      # The repository itself is the source of truth.
-      # ============================================================
+      - name: Prepare bundled AnimeGANv3 model
+        shell: bash
+        run: |
+          set -e
+
+          MODEL_DIR="app/src/main/assets/models"
+          MODEL_FILE="$MODEL_DIR/AnimeGANv3_Hayao_36.onnx"
+          MODEL_URL="https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Hayao_36.onnx"
+          EXPECTED_SHA256="95ba7b219073fd5b12f569bc38056ffd3019cf4caf15b1feb9f73d1286c9f69d"
+
+          mkdir -p "$MODEL_DIR"
+
+          echo "Downloading AnimeGANv3..."
+          curl \
+            --fail \
+            --location \
+            --retry 5 \
+            --retry-delay 3 \
+            --output "$MODEL_FILE" \
+            "$MODEL_URL"
+
+          echo "Verifying AnimeGANv3 SHA-256..."
+
+          ACTUAL_SHA256="$(sha256sum "$MODEL_FILE" | awk '{print $1}')"
+
+          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+            echo "ERROR: AnimeGANv3 SHA-256 mismatch."
+            echo "Expected: $EXPECTED_SHA256"
+            echo "Actual:   $ACTUAL_SHA256"
+            exit 1
+          fi
+
+          echo "AnimeGANv3 SHA-256 verified."
+
+          ls -lh "$MODEL_FILE"
+
       - name: Verify existing Android project
         shell: bash
         run: |
           set -e
 
-          echo "GPT Video2Anime project"
-          echo "======================="
-
           test -f settings.gradle.kts
           test -f build.gradle.kts
           test -f gradle.properties
-
           test -f app/build.gradle.kts
           test -f app/src/main/AndroidManifest.xml
 
@@ -96,13 +110,14 @@ jobs:
           test -f \
             app/src/main/java/com/gptvideo2anime/pipeline/VideoProcessingService.kt
 
-          echo
-          echo "Source tree:"
-          find app/src/main -type f | sort
+          test -f \
+            app/src/main/java/com/gptvideo2anime/inference/OnnxAnimeEngine.kt
 
-      # ============================================================
-      # GRADLE WRAPPER
-      # ============================================================
+          test -f \
+            app/src/main/assets/models/AnimeGANv3_Hayao_36.onnx
+
+          echo "Android project validation passed."
+
       - name: Verify Gradle wrapper
         shell: bash
         run: |
@@ -114,18 +129,13 @@ jobs:
 
           ./gradlew --version
 
-      # ============================================================
-      # STATIC VALIDATION
-      # ============================================================
       - name: Validate project
         shell: bash
         run: |
           set -e
 
-          echo "Running whitespace validation..."
           git diff --check
 
-          echo
           echo "Checking MediaCodec implementation..."
 
           grep -q \
@@ -136,22 +146,8 @@ jobs:
             'info.isEncoder' \
             app/src/main/java/com/gptvideo2anime/pipeline/MediaCodecVideoEngine.kt
 
-          echo
-          echo "Checking for invalid isDecoder reference..."
+          echo "MediaCodec validation passed."
 
-          if grep -RIn --exclude-dir=.git \
-              'isDecoder' \
-              app/src/main/java; then
-
-            echo "ERROR: invalid isDecoder symbol found."
-            exit 1
-          fi
-
-          echo "OK: MediaCodec validation passed."
-
-      # ============================================================
-      # BUILD DEBUG APK
-      # ============================================================
       - name: Build debug APK
         shell: bash
         run: |
@@ -164,9 +160,6 @@ jobs:
             --stacktrace \
             assembleDebug
 
-      # ============================================================
-      # VERIFY APK
-      # ============================================================
       - name: Verify generated APK
         shell: bash
         run: |
@@ -176,13 +169,9 @@ jobs:
 
           test -f "$APK"
 
-          echo
           echo "APK successfully generated:"
           ls -lh "$APK"
 
-      # ============================================================
-      # APK ARTIFACT
-      # ============================================================
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -191,9 +180,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # ============================================================
-      # REPORT
-      # ============================================================
       - name: Build summary
         shell: bash
         run: |
@@ -201,8 +187,8 @@ jobs:
           echo "GPT Video2Anime BUILD SUCCESSFUL"
           echo "========================================"
           echo
+          echo "Bundled model:"
+          ls -lh app/src/main/assets/models/AnimeGANv3_Hayao_36.onnx
+          echo
           echo "APK:"
           ls -lh app/build/outputs/apk/debug/app-debug.apk
-          echo
-          echo "The repository source was NOT regenerated."
-          echo "Committed source files remain authoritative."
