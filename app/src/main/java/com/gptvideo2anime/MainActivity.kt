@@ -2,7 +2,10 @@ package com.gptvideo2anime
 
 import android.Manifest
 import android.app.Dialog
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -31,10 +34,55 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scroll: ScrollView
     private lateinit var originalPreview: ImageView
     private lateinit var animePreview: ImageView
+    private lateinit var convertButton: Button
 
     private lateinit var modelManager: ModelManager
 
     private var selectedVideo: Uri? = null
+    private var processing = false
+
+    private val progressReceiver =
+        object : BroadcastReceiver() {
+            override fun onReceive(
+                context: Context?,
+                intent: Intent?
+            ) {
+
+                val stage =
+                    intent?.getStringExtra(
+                        VideoProcessingService.EXTRA_STAGE
+                    ) ?: return
+
+                val current =
+                    intent.getIntExtra(
+                        VideoProcessingService.EXTRA_CURRENT,
+                        0
+                    )
+
+                val total =
+                    intent.getIntExtra(
+                        VideoProcessingService.EXTRA_TOTAL,
+                        0
+                    )
+
+                runOnUiThread {
+
+                    val text =
+                        if (total > 0)
+                            "$stage ($current/$total)"
+                        else
+                            stage
+
+                    status.text = text
+                    appendLog(text)
+
+                    if (stage == "Complete") {
+                        processing = false
+                        convertButton.isEnabled = true
+                    }
+                }
+            }
+        }
 
     private val videoPicker =
         registerForActivityResult(
@@ -95,14 +143,20 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        root.addView(
+        convertButton =
             Button(this).apply {
                 text = "Convert To Anime"
+
                 setOnClickListener {
-                    startVideoPipeline()
+                    if (!processing) {
+                        processing = true
+                        isEnabled = false
+                        startVideoPipeline()
+                    }
                 }
             }
-        )
+
+        root.addView(convertButton)
 
         originalPreview =
             ImageView(this).apply {
@@ -145,9 +199,7 @@ class MainActivity : AppCompatActivity() {
 
         row.addView(
             LinearLayout(this).apply {
-
                 orientation = LinearLayout.VERTICAL
-
                 layoutParams =
                     LinearLayout.LayoutParams(
                         0,
@@ -168,9 +220,7 @@ class MainActivity : AppCompatActivity() {
 
         row.addView(
             LinearLayout(this).apply {
-
                 orientation = LinearLayout.VERTICAL
-
                 layoutParams =
                     LinearLayout.LayoutParams(
                         0,
@@ -200,20 +250,23 @@ class MainActivity : AppCompatActivity() {
 
         scroll =
             ScrollView(this).apply {
-
                 layoutParams =
                     LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         0,
                         1f
                     )
-
                 addView(logs)
             }
 
         root.addView(scroll)
 
         setContentView(root)
+
+        registerReceiver(
+            progressReceiver,
+            IntentFilter(VideoProcessingService.ACTION_PROGRESS)
+        )
 
         requestPermissions()
 
@@ -245,6 +298,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onDestroy() {
+        unregisterReceiver(progressReceiver)
+        super.onDestroy()
+    }
+
     private fun requestPermissions() {
 
         val permission =
@@ -259,9 +317,7 @@ class MainActivity : AppCompatActivity() {
                 permission
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            permissionLauncher.launch(
-                arrayOf(permission)
-            )
+            permissionLauncher.launch(arrayOf(permission))
         }
     }
 
@@ -345,6 +401,9 @@ class MainActivity : AppCompatActivity() {
 
         val input =
             selectedVideo ?: run {
+
+                processing = false
+                convertButton.isEnabled = true
 
                 appendLog("Select a video first.")
 
