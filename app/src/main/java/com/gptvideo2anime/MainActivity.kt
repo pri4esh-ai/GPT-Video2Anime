@@ -9,15 +9,21 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-
 import com.gptvideo2anime.model.ModelManager
 import com.gptvideo2anime.pipeline.VideoProcessingService
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity {
+
+    companion object {
+        private const val ACTION_START =
+            "com.gptvideo2anime.action.START_PROCESSING"
+
+        private const val EXTRA_INPUT_URI =
+            "com.gptvideo2anime.extra.INPUT_URI"
+    }
 
     private lateinit var status: TextView
 
@@ -180,10 +186,10 @@ class MainActivity : AppCompatActivity() {
             ).apply {
 
                 action =
-                    VideoProcessingService.ACTION_START
+                    ACTION_START
 
                 putExtra(
-                    VideoProcessingService.EXTRA_INPUT_URI,
+                    EXTRA_INPUT_URI,
                     input.toString()
                 )
             }
@@ -195,6 +201,6 @@ class MainActivity : AppCompatActivity() {
 
         status.text =
             "Processing started.\n" +
-            "MediaCodec pipeline is running."
+                "MediaCodec pipeline is running."
     }
 }
