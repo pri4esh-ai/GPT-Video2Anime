@@ -1,0 +1,28 @@
+name: Restore Working Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Restore main to known working commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          gh api \
+            --method PATCH \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/git/refs/heads/main" \
+            -f sha="fe9a776191a7463af1980c04726ad0ac71e64841" \
+            -F force=true
+
+          echo "main restored to:"
+          echo "fe9a776191a7463af1980c04726ad0ac71e64841"
