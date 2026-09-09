@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 class VideoProcessingService : Service() {
 
     companion object {
+
         const val ACTION_START =
             "com.gptvideo2anime.action.START_PROCESSING"
 
@@ -32,13 +33,18 @@ class VideoProcessingService : Service() {
 
     private val serviceScope =
         CoroutineScope(
-            SupervisorJob() + Dispatchers.IO
+            SupervisorJob() +
+                Dispatchers.IO
         )
 
-    private lateinit var modelManager: ModelManager
-    private lateinit var videoProcessor: VideoProcessor
+    private lateinit var modelManager:
+        ModelManager
+
+    private lateinit var videoProcessor:
+        VideoProcessor
 
     override fun onCreate() {
+
         super.onCreate()
 
         modelManager =
@@ -63,8 +69,13 @@ class VideoProcessingService : Service() {
         startId: Int
     ): Int {
 
-        if (intent?.action != ACTION_START) {
+        if (
+            intent?.action !=
+            ACTION_START
+        ) {
+
             stopSelf(startId)
+
             return START_NOT_STICKY
         }
 
@@ -73,7 +84,10 @@ class VideoProcessingService : Service() {
                 EXTRA_INPUT_URI
             )
 
-        if (inputUriString.isNullOrBlank()) {
+        if (
+            inputUriString.isNullOrBlank()
+        ) {
+
             updateNotification(
                 "No input video selected"
             )
@@ -91,22 +105,19 @@ class VideoProcessingService : Service() {
                     "Checking anime models..."
                 )
 
-                android.util.Log.i(
-                    "VideoProcessingService",
-                    "Starting model verification/download"
-                )
-
                 modelManager.ensureModels {
                     model,
                     downloaded,
                     total ->
 
-                    val progressText =
+                    val text =
                         if (total > 0L) {
 
                             val percent =
                                 (
-                                    downloaded * 100L / total
+                                    downloaded *
+                                        100L /
+                                        total
                                 ).coerceIn(
                                     0L,
                                     100L
@@ -121,27 +132,9 @@ class VideoProcessingService : Service() {
                         }
 
                     updateNotification(
-                        progressText
+                        text
                     )
                 }
-
-                android.util.Log.i(
-                    "VideoProcessingService",
-                    "Model status: " +
-                        modelManager.modelStatus()
-                )
-
-                android.util.Log.i(
-                    "VideoProcessingService",
-                    "Anime model path: " +
-                        modelManager.animeModelPath()
-                )
-
-                android.util.Log.i(
-                    "VideoProcessingService",
-                    "Enhancer model path: " +
-                        modelManager.enhancerModelPath()
-                )
 
                 updateNotification(
                     "Models ready"
@@ -164,7 +157,8 @@ class VideoProcessingService : Service() {
                 android.util.Log.i(
                     "VideoProcessingService",
                     "Video: " +
-                        "${result.width}x${result.height}, " +
+                        "${result.width}x" +
+                        "${result.height}, " +
                         "${result.frameRate} FPS, " +
                         result.mime
                 )
@@ -187,10 +181,15 @@ class VideoProcessingService : Service() {
                         result.encoderMime
                 )
 
+                android.util.Log.i(
+                    "VideoProcessingService",
+                    "Stage 1 anime frame: " +
+                        result.testFramePath
+                )
+
                 updateNotification(
-                    "Video ready: " +
-                        "${result.width}x${result.height} " +
-                        "${result.frameRate} FPS"
+                    "Stage 1 complete. " +
+                        "Anime frame generated."
                 )
 
             } catch (error: Exception) {
@@ -227,12 +226,17 @@ class VideoProcessingService : Service() {
                 Build.VERSION.SDK_INT >=
                 Build.VERSION_CODES.O
             ) {
+
                 Notification.Builder(
                     this,
                     CHANNEL_ID
                 )
+
             } else {
-                Notification.Builder(this)
+
+                Notification.Builder(
+                    this
+                )
             }
 
         return builder
@@ -278,7 +282,8 @@ class VideoProcessingService : Service() {
                 NotificationChannel(
                     CHANNEL_ID,
                     "Video Processing",
-                    NotificationManager.IMPORTANCE_LOW
+                    NotificationManager
+                        .IMPORTANCE_LOW
                 )
 
             val manager =
