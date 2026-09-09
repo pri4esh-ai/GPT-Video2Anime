@@ -21,7 +21,9 @@ import androidx.lifecycle.lifecycleScope
 import com.gptvideo2anime.inference.OnnxAnimeEngine
 import com.gptvideo2anime.model.ModelManager
 import com.gptvideo2anime.pipeline.VideoProcessingService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
@@ -38,10 +40,15 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(
             ActivityResultContracts.GetContent()
         ) { uri ->
+
             if (uri != null) {
+
                 selectedVideo = uri
+
                 status.text = "Video selected."
+
                 appendLog("Video selected.")
+
                 generatePreview(uri)
             }
         }
@@ -53,55 +60,68 @@ class MainActivity : AppCompatActivity() {
             appendLog("Permissions checked.")
         }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+    override fun onCreate(
+        savedInstanceState: Bundle?
+    ) {
         super.onCreate(savedInstanceState)
 
         modelManager = ModelManager(this)
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(32, 32, 32, 32)
-        }
-
-        val title = TextView(this).apply {
-            text = "GPT Video2Anime"
-            textSize = 26f
-        }
-
-        status = TextView(this).apply {
-            text = "Preparing models..."
-            textSize = 16f
-        }
-
-        val choose = Button(this).apply {
-            text = "Choose Video"
-            setOnClickListener {
-                videoPicker.launch("video/*")
+        val root =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(32, 32, 32, 32)
             }
-        }
 
-        val convert = Button(this).apply {
-            text = "Convert To Anime"
-            setOnClickListener {
-                startVideoPipeline()
+        val title =
+            TextView(this).apply {
+                text = "GPT Video2Anime"
+                textSize = 26f
             }
-        }
 
-        originalPreview = ImageView(this).apply {
-            adjustViewBounds = true
-        }
+        status =
+            TextView(this).apply {
+                text = "Preparing models..."
+                textSize = 16f
+            }
 
-        animePreview = ImageView(this).apply {
-            adjustViewBounds = true
-        }
+        val choose =
+            Button(this).apply {
+                text = "Choose Video"
 
-        logs = TextView(this).apply {
-            textSize = 13f
-        }
+                setOnClickListener {
+                    videoPicker.launch("video/*")
+                }
+            }
 
-        val scroll = ScrollView(this).apply {
-            addView(logs)
-        }
+        val convert =
+            Button(this).apply {
+                text = "Convert To Anime"
+
+                setOnClickListener {
+                    startVideoPipeline()
+                }
+            }
+
+        originalPreview =
+            ImageView(this).apply {
+                adjustViewBounds = true
+            }
+
+        animePreview =
+            ImageView(this).apply {
+                adjustViewBounds = true
+            }
+
+        logs =
+            TextView(this).apply {
+                textSize = 13f
+            }
+
+        val scroll =
+            ScrollView(this).apply {
+                addView(logs)
+            }
 
         root.addView(title)
         root.addView(status)
@@ -116,22 +136,35 @@ class MainActivity : AppCompatActivity() {
         requestPermissions()
 
         lifecycleScope.launch {
+
             try {
+
                 modelManager.ensureModels { message ->
-                    runOnUiThread { appendLog(message) }
+
+                    runOnUiThread {
+                        appendLog(message)
+                    }
                 }
 
-                status.text = modelManager.modelStatus()
+                status.text =
+                    modelManager.modelStatus()
 
             } catch (e: Exception) {
-                status.text = "Model install failed"
-                appendLog(e.message ?: "Unknown error")
+
+                status.text =
+                    "Model install failed"
+
+                appendLog(
+                    e.message ?: "Unknown error"
+                )
             }
         }
     }
 
     private fun requestPermissions() {
-        val permissions = mutableListOf<String>()
+
+        val permissions =
+            mutableListOf<String>()
 
         if (Build.VERSION.SDK_INT >= 33) {
             permissions += Manifest.permission.READ_MEDIA_VIDEO
@@ -141,6 +174,7 @@ class MainActivity : AppCompatActivity() {
 
         val missing =
             permissions.filter {
+
                 ContextCompat.checkSelfPermission(
                     this,
                     it
@@ -154,12 +188,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun generatePreview(uri: Uri) {
+    private fun generatePreview(
+        uri: Uri
+    ) {
+
         lifecycleScope.launch {
+
             try {
+
                 appendLog("Extracting first frame...")
 
-                val frame = extractFirstFrame(uri)
+                val frame =
+                    withContext(Dispatchers.IO) {
+
+                        extractFirstFrame(uri)
+                    }
 
                 originalPreview.setImageBitmap(frame)
 
@@ -171,11 +214,15 @@ class MainActivity : AppCompatActivity() {
 
                 appendLog("Running AnimeGANv3...")
 
-                val start = SystemClock.elapsedRealtime()
+                val start =
+                    SystemClock.elapsedRealtime()
 
                 val anime =
-                    OnnxAnimeEngine(modelPath).use {
-                        it.processFrame(frame)
+                    withContext(Dispatchers.Default) {
+
+                        OnnxAnimeEngine(modelPath).use {
+                            it.processFrame(frame)
+                        }
                     }
 
                 val elapsed =
@@ -187,21 +234,34 @@ class MainActivity : AppCompatActivity() {
                     "Preview ready (${elapsed} ms)"
 
                 appendLog(
-                    "Preview completed in ${elapsed} ms"
+                    "Anime preview completed in ${elapsed} ms"
                 )
 
             } catch (e: Exception) {
-                status.text = "Preview failed"
-                appendLog("ERROR: ${e.message}")
+
+                status.text =
+                    "Preview failed"
+
+                appendLog(
+                    "ERROR: ${e.message}"
+                )
             }
         }
     }
 
-    private fun extractFirstFrame(uri: Uri): Bitmap {
-        val retriever = MediaMetadataRetriever()
+    private fun extractFirstFrame(
+        uri: Uri
+    ): Bitmap {
+
+        val retriever =
+            MediaMetadataRetriever()
 
         try {
-            retriever.setDataSource(this, uri)
+
+            retriever.setDataSource(
+                this,
+                uri
+            )
 
             return retriever.getFrameAtTime(
                 0L,
@@ -211,18 +271,27 @@ class MainActivity : AppCompatActivity() {
             )
 
         } finally {
+
             retriever.release()
         }
     }
 
     private fun startVideoPipeline() {
-        val input = selectedVideo ?: return
+
+        val input =
+            selectedVideo ?: run {
+
+                appendLog("Select a video first.")
+
+                return
+            }
 
         val intent =
             Intent(
                 this,
                 VideoProcessingService::class.java
             ).apply {
+
                 action =
                     VideoProcessingService.ACTION_START
 
@@ -240,7 +309,10 @@ class MainActivity : AppCompatActivity() {
         appendLog("Full video pipeline started.")
     }
 
-    private fun appendLog(text: String) {
+    private fun appendLog(
+        text: String
+    ) {
+
         logs.append("$text\n")
     }
 }
