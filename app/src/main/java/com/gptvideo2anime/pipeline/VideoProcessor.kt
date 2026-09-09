@@ -37,19 +37,9 @@ class VideoProcessor(
         val info =
             codecEngine.inspect(uri)
 
-        val decoder =
-            codecEngine.findDecoder(
-                info.mime
-            )
-
         val encoderMime =
             codecEngine.bestEncoderMime(
                 info.mime
-            )
-
-        val encoder =
-            codecEngine.findEncoder(
-                encoderMime
             )
 
         return ProcessingInfo(
@@ -59,89 +49,109 @@ class VideoProcessor(
             durationUs = info.durationUs,
             mime = info.mime,
             decoderAvailable =
-                decoder != null,
+                codecEngine.findDecoder(info.mime) != null,
             encoderAvailable =
-                encoder != null,
-            encoderMime =
-                encoderMime,
+                codecEngine.findEncoder(encoderMime) != null,
+            encoderMime = encoderMime,
             testFramePath = null
         )
     }
 
     fun process(
-        uri: Uri
+        uri: Uri,
+        onProgress: (
+            current: Int,
+            total: Int,
+            stage: String
+        ) -> Unit
     ): ProcessingInfo {
 
         val result =
             inspect(uri)
 
         check(result.decoderAvailable) {
-            "No compatible video decoder found for " +
-                result.mime
+            "No compatible decoder found."
         }
 
         check(result.encoderAvailable) {
-            "No compatible video encoder found for " +
-                result.encoderMime
+            "No compatible encoder found."
         }
 
         val modelPath =
             modelManager.animeModelPath()
                 ?: throw IllegalStateException(
-                    "AnimeGANv3 model is not installed."
+                    "AnimeGANv3 model missing."
                 )
 
-        val outputDirectory =
+        val outputDir =
             File(
                 context.filesDir,
                 "stage1"
-            )
-
-        if (!outputDirectory.exists()) {
-            outputDirectory.mkdirs()
-        }
+            ).apply {
+                mkdirs()
+            }
 
         val outputFile =
             File(
-                outputDirectory,
+                outputDir,
                 "anime_test_frame.png"
             )
+
+        onProgress(
+            1,
+            5,
+            "Extracting first frame..."
+        )
 
         val frame =
             extractFirstFrame(uri)
 
+        onProgress(
+            2,
+            5,
+            "Loading AnimeGANv3..."
+        )
+
         val animeFrame =
-            OnnxAnimeEngine(
-                modelPath
-            ).use { engine ->
+            OnnxAnimeEngine(modelPath).use { engine ->
+
+                onProgress(
+                    3,
+                    5,
+                    "Running AnimeGANv3..."
+                )
+
                 engine.processFrame(frame)
             }
 
+        onProgress(
+            4,
+            5,
+            "Saving preview..."
+        )
+
         try {
 
-            outputFile.outputStream()
-                .use { output ->
-                    check(
-                        animeFrame.compress(
-                            Bitmap.CompressFormat.PNG,
-                            100,
-                            output
-                        )
-                    ) {
-                        "Unable to save AnimeGANv3 frame."
-                    }
-                }
+            outputFile.outputStream().use {
+
+                animeFrame.compress(
+                    Bitmap.CompressFormat.PNG,
+                    100,
+                    it
+                )
+            }
 
         } finally {
 
-            if (!animeFrame.isRecycled) {
-                animeFrame.recycle()
-            }
-
-            if (!frame.isRecycled) {
-                frame.recycle()
-            }
+            animeFrame.recycle()
+            frame.recycle()
         }
+
+        onProgress(
+            5,
+            5,
+            "Preview saved."
+        )
 
         return result.copy(
             testFramePath =
@@ -163,17 +173,12 @@ class VideoProcessor(
                 uri
             )
 
-            val frame =
-                retriever.getFrameAtTime(
-                    0L,
-                    MediaMetadataRetriever
-                        .OPTION_CLOSEST
-                )
-
-            return frame
-                ?: throw IllegalStateException(
-                    "Unable to decode the first video frame."
-                )
+            return retriever.getFrameAtTime(
+                0L,
+                MediaMetadataRetriever.OPTION_CLOSEST
+            ) ?: throw IllegalStateException(
+                "Unable to decode first frame."
+            )
 
         } finally {
 
