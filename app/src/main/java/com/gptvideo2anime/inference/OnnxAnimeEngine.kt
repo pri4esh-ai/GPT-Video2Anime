@@ -2,7 +2,6 @@ package com.gptvideo2anime.inference
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
 import android.graphics.Bitmap
 import java.nio.FloatBuffer
@@ -118,7 +117,7 @@ class OnnxAnimeEngine(
                         "ONNX model returned no output."
                     }
 
-                    outputToBitmap(
+                    return outputToBitmap(
                         result[0].value,
                         frame.width,
                         frame.height,
@@ -184,7 +183,6 @@ class OnnxAnimeEngine(
                 (pixel and 0xFF) /
                     255.0f
 
-            // AnimeGANv3 expects [-1, 1].
             data[i] =
                 red * 2.0f - 1.0f
 
@@ -361,7 +359,6 @@ class OnnxAnimeEngine(
         value: Float
     ): Int {
 
-        // AnimeGANv3 output is [-1, 1].
         val normalized =
             (value + 1.0f) * 0.5f
 
