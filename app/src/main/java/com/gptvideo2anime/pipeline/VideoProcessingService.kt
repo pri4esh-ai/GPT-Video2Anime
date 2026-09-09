@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import com.gptvideo2anime.model.ModelManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -105,35 +106,9 @@ class VideoProcessingService : Service() {
                     "Checking anime models..."
                 )
 
-                modelManager.ensureModels {
-                    model,
-                    downloaded,
-                    total ->
+                modelManager.ensureModels { message ->
 
-                    val text =
-                        if (total > 0L) {
-
-                            val percent =
-                                (
-                                    downloaded *
-                                        100L /
-                                        total
-                                ).coerceIn(
-                                    0L,
-                                    100L
-                                )
-
-                            "$model: $percent%"
-
-                        } else {
-
-                            "$model: " +
-                                "${downloaded / (1024 * 1024)} MB"
-                        }
-
-                    updateNotification(
-                        text
-                    )
+                    updateNotification(message)
                 }
 
                 updateNotification(
@@ -154,7 +129,7 @@ class VideoProcessingService : Service() {
                         inputUri
                     )
 
-                android.util.Log.i(
+                Log.i(
                     "VideoProcessingService",
                     "Video: " +
                         "${result.width}x" +
@@ -163,38 +138,25 @@ class VideoProcessingService : Service() {
                         result.mime
                 )
 
-                android.util.Log.i(
+                Log.i(
                     "VideoProcessingService",
                     "Decoder available: " +
                         result.decoderAvailable
                 )
 
-                android.util.Log.i(
+                Log.i(
                     "VideoProcessingService",
                     "Encoder available: " +
                         result.encoderAvailable
                 )
 
-                android.util.Log.i(
-                    "VideoProcessingService",
-                    "Encoder MIME: " +
-                        result.encoderMime
-                )
-
-                android.util.Log.i(
-                    "VideoProcessingService",
-                    "Stage 1 anime frame: " +
-                        result.testFramePath
-                )
-
                 updateNotification(
-                    "Stage 1 complete. " +
-                        "Anime frame generated."
+                    "Stage 1 complete"
                 )
 
             } catch (error: Exception) {
 
-                android.util.Log.e(
+                Log.e(
                     "VideoProcessingService",
                     "Processing failed",
                     error
@@ -265,7 +227,7 @@ class VideoProcessingService : Service() {
             createNotification(text)
         )
 
-        android.util.Log.i(
+        Log.i(
             "VideoProcessingService",
             text
         )
@@ -282,8 +244,7 @@ class VideoProcessingService : Service() {
                 NotificationChannel(
                     CHANNEL_ID,
                     "Video Processing",
-                    NotificationManager
-                        .IMPORTANCE_LOW
+                    NotificationManager.IMPORTANCE_LOW
                 )
 
             val manager =
