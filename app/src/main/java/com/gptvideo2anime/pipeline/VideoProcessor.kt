@@ -1,3 +1,155 @@
 package com.gptvideo2anime.pipeline
 
-class VideoProcessor
+import android.content.Context
+import android.media.MediaCodecInfo
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.net.Uri
+
+class MediaCodecVideoEngine(
+    private val context: Context
+) {
+
+    data class VideoInfo(
+        val width: Int,
+        val height: Int,
+        val frameRate: Int,
+        val durationUs: Long,
+        val mime: String
+    )
+
+    fun inspect(uri: Uri): VideoInfo {
+        val extractor = MediaExtractor()
+
+        context.contentResolver.openFileDescriptor(
+            uri,
+            "r"
+        ).use { descriptor ->
+            requireNotNull(descriptor) {
+                "Unable to open input video"
+            }
+
+            extractor.setDataSource(
+                descriptor.fileDescriptor
+            )
+        }
+
+        var videoFormat: MediaFormat? = null
+
+        for (i in 0 until extractor.trackCount) {
+            val format = extractor.getTrackFormat(i)
+
+            val mime = format.getString(
+                MediaFormat.KEY_MIME
+            )
+
+            if (mime?.startsWith("video/") == true) {
+                videoFormat = format
+                break
+            }
+        }
+
+        extractor.release()
+
+        val format = requireNotNull(videoFormat) {
+            "No video track found"
+        }
+
+        val mime = requireNotNull(
+            format.getString(MediaFormat.KEY_MIME)
+        )
+
+        val width =
+            format.getInteger(
+                MediaFormat.KEY_WIDTH
+            )
+
+        val height =
+            format.getInteger(
+                MediaFormat.KEY_HEIGHT
+            )
+
+        val frameRate =
+            if (
+                format.containsKey(
+                    MediaFormat.KEY_FRAME_RATE
+                )
+            ) {
+                format.getInteger(
+                    MediaFormat.KEY_FRAME_RATE
+                )
+            } else {
+                30
+            }
+
+        val durationUs =
+            if (
+                format.containsKey(
+                    MediaFormat.KEY_DURATION
+                )
+            ) {
+                format.getLong(
+                    MediaFormat.KEY_DURATION
+                )
+            } else {
+                0L
+            }
+
+        return VideoInfo(
+            width = width,
+            height = height,
+            frameRate = frameRate,
+            durationUs = durationUs,
+            mime = mime
+        )
+    }
+
+    fun findDecoder(
+        mime: String
+    ): MediaCodecInfo? {
+
+        return MediaCodecListCompat
+            .codecs()
+            .firstOrNull { info ->
+
+                !info.isEncoder &&
+                    info.supportedTypes.any { type ->
+                        type.equals(
+                            mime,
+                            ignoreCase = true
+                        )
+                    }
+            }
+    }
+
+    fun findEncoder(
+        mime: String
+    ): MediaCodecInfo? {
+
+        return MediaCodecListCompat
+            .codecs()
+            .firstOrNull { info ->
+
+                info.isEncoder &&
+                    info.supportedTypes.any { type ->
+                        type.equals(
+                            mime,
+                            ignoreCase = true
+                        )
+                    }
+            }
+    }
+}
+
+private object MediaCodecListCompat {
+
+    fun codecs(): List<MediaCodecInfo> {
+
+        val list =
+            android.media.MediaCodecList(
+                android.media.MediaCodecList.ALL_CODECS
+            )
+
+        return list.codecInfos.toList()
+    }
+}
