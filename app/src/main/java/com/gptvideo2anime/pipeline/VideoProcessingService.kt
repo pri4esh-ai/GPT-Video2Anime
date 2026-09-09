@@ -18,7 +18,6 @@ import kotlinx.coroutines.launch
 class VideoProcessingService : Service() {
 
     companion object {
-
         const val ACTION_START =
             "com.gptvideo2anime.action.START_PROCESSING"
 
@@ -34,33 +33,24 @@ class VideoProcessingService : Service() {
 
     private val serviceScope =
         CoroutineScope(
-            SupervisorJob() +
-                Dispatchers.IO
+            SupervisorJob() + Dispatchers.IO
         )
 
-    private lateinit var modelManager:
-        ModelManager
-
-    private lateinit var videoProcessor:
-        VideoProcessor
+    private lateinit var modelManager: ModelManager
+    private lateinit var videoProcessor: VideoProcessor
 
     override fun onCreate() {
 
         super.onCreate()
 
-        modelManager =
-            ModelManager(this)
-
-        videoProcessor =
-            VideoProcessor(this)
+        modelManager = ModelManager(this)
+        videoProcessor = VideoProcessor(this)
 
         createNotificationChannel()
 
         startForeground(
             NOTIFICATION_ID,
-            createNotification(
-                "Preparing video processing..."
-            )
+            createNotification("Preparing video processing...")
         )
     }
 
@@ -70,30 +60,17 @@ class VideoProcessingService : Service() {
         startId: Int
     ): Int {
 
-        if (
-            intent?.action != ACTION_START
-        ) {
-
+        if (intent?.action != ACTION_START) {
             stopSelf(startId)
-
             return START_NOT_STICKY
         }
 
-        val inputUriString =
-            intent.getStringExtra(
-                EXTRA_INPUT_URI
-            )
+        val input =
+            intent.getStringExtra(EXTRA_INPUT_URI)
 
-        if (
-            inputUriString.isNullOrBlank()
-        ) {
-
-            updateNotification(
-                "No input video selected"
-            )
-
+        if (input.isNullOrBlank()) {
+            updateNotification("No input video selected")
             stopSelf(startId)
-
             return START_NOT_STICKY
         }
 
@@ -101,43 +78,23 @@ class VideoProcessingService : Service() {
 
             try {
 
-                updateNotification(
-                    "Checking anime models..."
-                )
+                updateNotification("Checking models...")
 
                 modelManager.ensureModels { message ->
                     updateNotification(message)
                 }
 
-                updateNotification(
-                    "Models ready"
-                )
-
-                val inputUri =
-                    android.net.Uri.parse(
-                        inputUriString
-                    )
-
-                updateNotification(
-                    "Opening video..."
-                )
+                updateNotification("Opening video...")
 
                 val result =
                     videoProcessor.process(
-                        inputUri
+                        android.net.Uri.parse(input)
                     ) { current, total, stage ->
 
                         val text =
                             if (total > 0) {
-
-                                val percent =
-                                    (current * 100 / total)
-                                        .coerceIn(0, 100)
-
-                                "$stage ($percent%)"
-
+                                "$stage (${current.coerceIn(0, total)}/$total)"
                             } else {
-
                                 stage
                             }
 
@@ -146,43 +103,21 @@ class VideoProcessingService : Service() {
 
                 Log.i(
                     "VideoProcessingService",
-                    "Video: ${result.width}x${result.height}"
-                )
-
-                Log.i(
-                    "VideoProcessingService",
-                    "FPS: ${result.frameRate}"
-                )
-
-                Log.i(
-                    "VideoProcessingService",
-                    "Decoder: ${result.decoderAvailable}"
-                )
-
-                Log.i(
-                    "VideoProcessingService",
-                    "Encoder: ${result.encoderAvailable}"
-                )
-
-                Log.i(
-                    "VideoProcessingService",
                     "Saved preview: ${result.testFramePath}"
                 )
 
-                updateNotification(
-                    "Stage 1 complete"
-                )
+                updateNotification("Stage 1 complete")
 
-            } catch (error: Exception) {
+            } catch (e: Exception) {
 
                 Log.e(
                     "VideoProcessingService",
                     "Processing failed",
-                    error
+                    e
                 )
 
                 updateNotification(
-                    "Processing failed: ${error.message ?: "Unknown error"}"
+                    "Failed: ${e.message}"
                 )
 
             } finally {
@@ -199,28 +134,16 @@ class VideoProcessingService : Service() {
     ): Notification {
 
         val builder =
-            if (
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-            ) {
-
-                Notification.Builder(
-                    this,
-                    CHANNEL_ID
-                )
-
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, CHANNEL_ID)
             } else {
-
                 Notification.Builder(this)
             }
 
         return builder
-            .setContentTitle(
-                "GPT Video2Anime"
-            )
+            .setContentTitle("GPT Video2Anime")
             .setContentText(text)
-            .setSmallIcon(
-                android.R.drawable.ic_media_play
-            )
+            .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .build()
     }
@@ -239,17 +162,12 @@ class VideoProcessingService : Service() {
             createNotification(text)
         )
 
-        Log.i(
-            "VideoProcessingService",
-            text
-        )
+        Log.i("VideoProcessingService", text)
     }
 
     private fun createNotificationChannel() {
 
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-        ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 
             val manager =
                 getSystemService(
