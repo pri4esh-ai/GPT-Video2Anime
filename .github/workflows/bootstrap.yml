@@ -67,7 +67,7 @@ jobs:
             --retry 5 \
             --retry-delay 3 \
             --output "$MODEL_DIR/AnimeGANv3_JP_face.onnx" \
-            "https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_JP_face.onnx"
+            "https://huggingface.co/vumichien/AnimeGANv3_JP_face/resolve/main/AnimeGANv3_JP_face.onnx"
 
           echo "Downloading RealESR..."
 
