@@ -15,30 +15,25 @@ import androidx.core.content.ContextCompat
 import com.gptvideo2anime.model.ModelManager
 import com.gptvideo2anime.pipeline.VideoProcessingService
 
-class MainActivity : AppCompatActivity {
+class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val ACTION_START =
             "com.gptvideo2anime.action.START_PROCESSING"
-
         private const val EXTRA_INPUT_URI =
             "com.gptvideo2anime.extra.INPUT_URI"
     }
 
     private lateinit var status: TextView
-
     private var selectedVideo: Uri? = null
 
     private val videoPicker =
         registerForActivityResult(
             ActivityResultContracts.GetContent()
         ) { uri ->
-
             if (uri != null) {
                 selectedVideo = uri
-
-                status.text =
-                    "Video selected.\nReady to process."
+                status.text = "Video selected.\nReady to process."
             }
         }
 
@@ -46,87 +41,48 @@ class MainActivity : AppCompatActivity {
         registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) {
-            status.text =
-                "Permissions checked.\nChoose a video."
+            status.text = "Permissions checked.\nChoose a video."
         }
 
-    override fun onCreate(
-        savedInstanceState: Bundle?
-    ) {
+    override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val root =
-            LinearLayout(this).apply {
-                orientation =
-                    LinearLayout.VERTICAL
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(40, 40, 40, 40)
+        }
 
-                setPadding(
-                    40,
-                    40,
-                    40,
-                    40
-                )
+        val title = TextView(this).apply {
+            text = "GPT Video2Anime"
+            textSize = 28f
+        }
+
+        status = TextView(this).apply {
+            text = "Offline video-to-anime pipeline"
+            textSize = 16f
+            setPadding(0, 30, 0, 30)
+        }
+
+        val choose = Button(this).apply {
+            text = "Choose Video"
+            setOnClickListener {
+                videoPicker.launch("video/*")
             }
+        }
 
-        val title =
-            TextView(this).apply {
-                text =
-                    "GPT Video2Anime"
-
-                textSize = 28f
+        val process = Button(this).apply {
+            text = "Convert to Anime"
+            setOnClickListener {
+                startProcessing()
             }
+        }
 
-        status =
-            TextView(this).apply {
-                text =
-                    "Offline video-to-anime pipeline"
-
-                textSize = 16f
-
-                setPadding(
-                    0,
-                    30,
-                    0,
-                    30
-                )
-            }
-
-        val choose =
-            Button(this).apply {
-                text =
-                    "Choose Video"
-
-                setOnClickListener {
-                    videoPicker.launch("video/*")
-                }
-            }
-
-        val process =
-            Button(this).apply {
-                text =
-                    "Convert to Anime"
-
-                setOnClickListener {
-                    startProcessing()
-                }
-            }
-
-        val model =
-            TextView(this).apply {
-                text =
-                    "Model: ${
-                        ModelManager(
-                            this@MainActivity
-                        ).modelStatus()
-                    }"
-
-                setPadding(
-                    0,
-                    20,
-                    0,
-                    20
-                )
-            }
+        val model = TextView(this).apply {
+            text = "Model: ${
+                ModelManager(this@MainActivity).modelStatus()
+            }"
+            setPadding(0, 20, 0, 20)
+        }
 
         root.addView(title)
         root.addView(status)
@@ -135,64 +91,48 @@ class MainActivity : AppCompatActivity {
         root.addView(model)
 
         setContentView(root)
-
         requestPermissionsIfNeeded()
     }
 
     private fun requestPermissionsIfNeeded() {
-
-        val permissions =
-            mutableListOf<String>()
+        val permissions = mutableListOf<String>()
 
         if (Build.VERSION.SDK_INT >= 33) {
-            permissions +=
-                Manifest.permission.READ_MEDIA_VIDEO
+            permissions += Manifest.permission.READ_MEDIA_VIDEO
         } else {
-            permissions +=
-                Manifest.permission.READ_EXTERNAL_STORAGE
+            permissions += Manifest.permission.READ_EXTERNAL_STORAGE
         }
 
-        val missing =
-            permissions.filter {
-                ContextCompat.checkSelfPermission(
-                    this,
-                    it
-                ) != PackageManager.PERMISSION_GRANTED
-            }
+        val missing = permissions.filter {
+            ContextCompat.checkSelfPermission(
+                this,
+                it
+            ) != PackageManager.PERMISSION_GRANTED
+        }
 
         if (missing.isNotEmpty()) {
-            permissionLauncher.launch(
-                missing.toTypedArray()
-            )
+            permissionLauncher.launch(missing.toTypedArray())
         }
     }
 
     private fun startProcessing() {
-
-        val input =
-            selectedVideo
+        val input = selectedVideo
 
         if (input == null) {
-            status.text =
-                "Choose a video first."
-
+            status.text = "Choose a video first."
             return
         }
 
-        val intent =
-            Intent(
-                this,
-                VideoProcessingService::class.java
-            ).apply {
-
-                action =
-                    ACTION_START
-
-                putExtra(
-                    EXTRA_INPUT_URI,
-                    input.toString()
-                )
-            }
+        val intent = Intent(
+            this,
+            VideoProcessingService::class.java
+        ).apply {
+            action = ACTION_START
+            putExtra(
+                EXTRA_INPUT_URI,
+                input.toString()
+            )
+        }
 
         ContextCompat.startForegroundService(
             this,
